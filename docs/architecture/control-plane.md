@@ -10,8 +10,10 @@ doc:
 
 # Control Plane Architecture
 
-Status: mixed current and planned. M1 runtime foundation has started; scheduler,
-worker runtime, GitHub sync, and queue data flows are not implemented yet.
+Status: mixed current and planned. M1 runtime foundation, scheduler, claim and
+lease services, GitHub sync, API/CLI boundaries, and worker run lifecycle
+commands are implemented. Queue workbench UI, MCP, broad observability, and
+experience hub capabilities remain planned.
 
 ## Purpose
 

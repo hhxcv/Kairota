@@ -11,9 +11,9 @@ doc:
 # Control API
 
 Status: mixed current and planned. Health, work item, queue summary, scheduler
-cycle, claim, lease heartbeat, stale lease reconciliation, GitHub repository
-sync, and GitHub webhook endpoints are implemented through M1.5. MCP,
-worker-run commands, and adapter-backed public mutations are not implemented yet.
+cycle, claim, lease heartbeat, stale lease reconciliation, worker-run lifecycle,
+GitHub repository sync, and GitHub webhook endpoints are implemented through
+M1.6. MCP and adapter-backed public mutations are not implemented yet.
 
 ## Planned Interfaces
 
@@ -46,6 +46,11 @@ worker-run commands, and adapter-backed public mutations are not implemented yet
 | `POST` | `/work-items/{id}/claim` | implemented; requires `Idempotency-Key` |
 | `POST` | `/leases/{id}/heartbeat` | implemented; requires `Idempotency-Key` |
 | `POST` | `/reconcile/leases/expire` | implemented; requires `Idempotency-Key` |
+| `GET` | `/worker-runs/{id}` | implemented |
+| `POST` | `/worker-runs` | implemented; requires `Idempotency-Key` |
+| `POST` | `/worker-runs/{id}/heartbeat` | implemented; requires `Idempotency-Key` |
+| `POST` | `/worker-runs/{id}/report` | implemented; requires `Idempotency-Key` |
+| `POST` | `/worker-runs/{id}/close` | implemented; requires `Idempotency-Key` |
 | `POST` | `/repositories/{id}/sync` | implemented; requires `Idempotency-Key` |
 | `POST` | `/webhooks/github` | implemented; verifies `X-Hub-Signature-256` when configured |
 
@@ -65,6 +70,7 @@ result; reusing the same key with a different payload returns
 | `scheduler run` | implemented |
 | `leases heartbeat` | implemented |
 | `reconcile leases` | implemented |
+| `worker-runs create/show/heartbeat/report/close` | implemented |
 | `sync repository` | implemented; requires `--idempotency-key` |
 
 ## Planned Adapter Set

@@ -25,6 +25,11 @@ from kairota.contracts.schemas import (
     RepositorySyncRead,
     SchedulerCycleCreate,
     SchedulerCycleRead,
+    WorkerRunCloseCommand,
+    WorkerRunCreateCommand,
+    WorkerRunHeartbeatCommand,
+    WorkerRunRead,
+    WorkerRunReportCommand,
     WorkItemCreate,
     WorkItemRead,
 )
@@ -45,6 +50,13 @@ from kairota.services.work_items import (
     get_work_item,
     list_work_items,
     queue_summary,
+)
+from kairota.services.worker_runs import (
+    close_worker_run_command,
+    create_worker_run_command,
+    get_worker_run,
+    heartbeat_worker_run_command,
+    report_worker_run_command,
 )
 
 router = APIRouter()
@@ -217,6 +229,127 @@ def api_expire_stale_leases(
             )
     except IdempotencyConflictError as exc:
         return blocked_response(409, "idempotency_conflict", str(exc))
+
+
+@router.get("/worker-runs/{worker_run_id}", response_model=WorkerRunRead)
+def api_get_worker_run(
+    worker_run_id: str,
+    session: SessionDependency,
+) -> WorkerRunRead:
+    worker_run = get_worker_run(session, worker_run_id)
+    if worker_run is None:
+        raise HTTPException(status_code=404, detail="Worker run not found.")
+    return worker_run
+
+
+@router.post("/worker-runs", response_model=WorkerRunRead)
+def api_create_worker_run(
+    command: WorkerRunCreateCommand,
+    session: SessionDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> WorkerRunRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /worker-runs requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            return create_worker_run_command(
+                session,
+                command=command,
+                idempotency_key=idempotency_key,
+                actor="api",
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+
+
+@router.post("/worker-runs/{worker_run_id}/heartbeat", response_model=WorkerRunRead)
+def api_heartbeat_worker_run(
+    worker_run_id: str,
+    command: WorkerRunHeartbeatCommand,
+    session: SessionDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> WorkerRunRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /worker-runs/{id}/heartbeat requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            return heartbeat_worker_run_command(
+                session,
+                worker_run_id=worker_run_id,
+                command=command,
+                idempotency_key=idempotency_key,
+                actor="api",
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+
+
+@router.post("/worker-runs/{worker_run_id}/report", response_model=WorkerRunRead)
+def api_report_worker_run(
+    worker_run_id: str,
+    command: WorkerRunReportCommand,
+    session: SessionDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> WorkerRunRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /worker-runs/{id}/report requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            return report_worker_run_command(
+                session,
+                worker_run_id=worker_run_id,
+                command=command,
+                idempotency_key=idempotency_key,
+                actor="api",
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+
+
+@router.post("/worker-runs/{worker_run_id}/close", response_model=WorkerRunRead)
+def api_close_worker_run(
+    worker_run_id: str,
+    command: WorkerRunCloseCommand,
+    session: SessionDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> WorkerRunRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /worker-runs/{id}/close requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            return close_worker_run_command(
+                session,
+                worker_run_id=worker_run_id,
+                command=command,
+                idempotency_key=idempotency_key,
+                actor="api",
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
 
 
 @router.post("/repositories/{repository_id}/sync", response_model=RepositorySyncRead)

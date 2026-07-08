@@ -315,6 +315,13 @@ class WorkerRun(TimestampMixin, Base):
             f"result is null or result in {enum_values(WorkerRunResult)}",
             "ck_worker_runs_result",
         ),
+        Index(
+            "uq_worker_runs_open_lease",
+            "lease_id",
+            unique=True,
+            sqlite_where=text("lease_id IS NOT NULL AND status <> 'closed'"),
+            postgresql_where=text("lease_id IS NOT NULL AND status <> 'closed'"),
+        ),
     )
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
@@ -328,6 +335,9 @@ class WorkerRun(TimestampMixin, Base):
         nullable=False,
         default=WorkerRunStatus.PLANNED.value,
     )
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    heartbeat_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    closed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result: Mapped[str | None] = mapped_column(String(32))
     validation: Mapped[dict[str, object]] = mapped_column(
         JSON, nullable=False, default=dict

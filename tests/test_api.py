@@ -235,6 +235,67 @@ def test_claim_and_heartbeat_success(client: TestClient) -> None:
     assert heartbeat.json()["refreshed"] is True
 
 
+def test_worker_run_endpoints_enforce_lease_authority(client: TestClient) -> None:
+    work_item_id = create_ready_work_item(client, "create-worker-run")
+    claim = client.post(
+        f"/work-items/{work_item_id}/claim",
+        headers={"Idempotency-Key": "claim-worker-run"},
+        json={"owner": "slot-1"},
+    )
+    assert claim.status_code == 200
+    lease_id = claim.json()["lease_id"]
+    fencing_token = claim.json()["fencing_token"]
+
+    created = client.post(
+        "/worker-runs",
+        headers={"Idempotency-Key": "worker-run-create"},
+        json={
+            "work_item_id": work_item_id,
+            "lease_id": lease_id,
+            "fencing_token": fencing_token,
+        },
+    )
+    assert created.status_code == 200
+    worker_run_id = created.json()["id"]
+    assert created.json()["status"] == "running"
+    assert created.json()["started_at"] is not None
+
+    detail = client.get(f"/worker-runs/{worker_run_id}")
+    assert detail.status_code == 200
+    assert detail.json()["lease_id"] == lease_id
+
+    stale = client.post(
+        f"/worker-runs/{worker_run_id}/heartbeat",
+        headers={"Idempotency-Key": "worker-run-stale-heartbeat"},
+        json={"fencing_token": "stale-token"},
+    )
+    assert stale.status_code == 409
+    assert stale.json()["reason_code"] == "invalid_fencing_token"
+
+    report = client.post(
+        f"/worker-runs/{worker_run_id}/report",
+        headers={"Idempotency-Key": "worker-run-report"},
+        json={
+            "fencing_token": fencing_token,
+            "validation": {"pytest": "passed"},
+            "public_mutations": {"pr": 7},
+        },
+    )
+    assert report.status_code == 200
+    assert report.json()["status"] == "reporting"
+    assert report.json()["validation"]["pytest"] == "passed"
+
+    closed = client.post(
+        f"/worker-runs/{worker_run_id}/close",
+        headers={"Idempotency-Key": "worker-run-close"},
+        json={"fencing_token": fencing_token, "result": "blocked"},
+    )
+    assert closed.status_code == 200
+    assert closed.json()["status"] == "closed"
+    assert closed.json()["result"] == "blocked"
+    assert client.get(f"/work-items/{work_item_id}").json()["status"] == "blocked"
+
+
 def test_repository_sync_uses_github_adapter(
     client: TestClient,
     session_factory: sessionmaker[Session],

@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 from collections.abc import Sequence
+from typing import cast
 
 from alembic import command
 from alembic.config import Config
@@ -14,6 +15,8 @@ from kairota.config import get_settings
 from kairota.contracts.enums import (
     AutonomyMode,
     RiskLevel,
+    WorkerRole,
+    WorkerRunResult,
     WorkItemStatus,
     WorkType,
 )
@@ -21,6 +24,10 @@ from kairota.contracts.schemas import (
     ClaimWorkItemCommand,
     LeaseHeartbeatCommand,
     SchedulerCycleCreate,
+    WorkerRunCloseCommand,
+    WorkerRunCreateCommand,
+    WorkerRunHeartbeatCommand,
+    WorkerRunReportCommand,
     WorkItemCreate,
 )
 from kairota.db import create_session_factory
@@ -38,6 +45,13 @@ from kairota.services.work_items import (
     get_work_item,
     list_work_items,
     queue_summary,
+)
+from kairota.services.worker_runs import (
+    close_worker_run_command,
+    create_worker_run_command,
+    get_worker_run,
+    heartbeat_worker_run_command,
+    report_worker_run_command,
 )
 
 
@@ -214,6 +228,127 @@ def cmd_reconcile_leases(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_worker_runs_create(args: argparse.Namespace) -> int:
+    payload = WorkerRunCreateCommand(
+        work_item_id=args.work_item_id,
+        lease_id=args.lease_id,
+        fencing_token=args.fencing_token,
+        role=WorkerRole(args.role),
+    )
+    try:
+        with session_scope() as session, session.begin():
+            result = create_worker_run_command(
+                session,
+                command=payload,
+                idempotency_key=args.idempotency_key,
+                actor="cli",
+            )
+    except IdempotencyConflictError as exc:
+        print_blocked("idempotency_conflict", str(exc))
+        return 2
+    except CommandBlockedError as exc:
+        print_blocked(exc.reason_code, exc.explanation, exc.details)
+        return 2
+    print_json(result.model_dump(mode="json"))
+    return 0
+
+
+def cmd_worker_runs_show(args: argparse.Namespace) -> int:
+    with session_scope() as session:
+        result = get_worker_run(session, args.worker_run_id)
+    if result is None:
+        print_blocked(
+            "not_found",
+            "Worker run not found.",
+            {"id": args.worker_run_id},
+        )
+        return 2
+    print_json(result.model_dump(mode="json"))
+    return 0
+
+
+def cmd_worker_runs_heartbeat(args: argparse.Namespace) -> int:
+    payload = WorkerRunHeartbeatCommand(fencing_token=args.fencing_token)
+    try:
+        with session_scope() as session, session.begin():
+            result = heartbeat_worker_run_command(
+                session,
+                worker_run_id=args.worker_run_id,
+                command=payload,
+                idempotency_key=args.idempotency_key,
+                actor="cli",
+            )
+    except IdempotencyConflictError as exc:
+        print_blocked("idempotency_conflict", str(exc))
+        return 2
+    except CommandBlockedError as exc:
+        print_blocked(exc.reason_code, exc.explanation, exc.details)
+        return 2
+    print_json(result.model_dump(mode="json"))
+    return 0
+
+
+def cmd_worker_runs_report(args: argparse.Namespace) -> int:
+    try:
+        payload = WorkerRunReportCommand(
+            fencing_token=args.fencing_token,
+            validation=json_object_arg(args.validation_json),
+            public_mutations=json_object_arg(args.public_mutations_json),
+            cost_summary=json_object_arg(args.cost_summary_json),
+        )
+    except ValueError as exc:
+        print_blocked("invalid_json", str(exc))
+        return 2
+    try:
+        with session_scope() as session, session.begin():
+            result = report_worker_run_command(
+                session,
+                worker_run_id=args.worker_run_id,
+                command=payload,
+                idempotency_key=args.idempotency_key,
+                actor="cli",
+            )
+    except IdempotencyConflictError as exc:
+        print_blocked("idempotency_conflict", str(exc))
+        return 2
+    except CommandBlockedError as exc:
+        print_blocked(exc.reason_code, exc.explanation, exc.details)
+        return 2
+    print_json(result.model_dump(mode="json"))
+    return 0
+
+
+def cmd_worker_runs_close(args: argparse.Namespace) -> int:
+    try:
+        payload = WorkerRunCloseCommand(
+            fencing_token=args.fencing_token,
+            result=WorkerRunResult(args.result),
+            validation=json_object_arg(args.validation_json),
+            public_mutations=json_object_arg(args.public_mutations_json),
+            cost_summary=json_object_arg(args.cost_summary_json),
+        )
+    except ValueError as exc:
+        print_blocked("invalid_json", str(exc))
+        return 2
+    try:
+        with session_scope() as session, session.begin():
+            result = close_worker_run_command(
+                session,
+                worker_run_id=args.worker_run_id,
+                command=payload,
+                idempotency_key=args.idempotency_key,
+                actor="cli",
+            )
+    except IdempotencyConflictError as exc:
+        print_blocked("idempotency_conflict", str(exc))
+        return 2
+    except CommandBlockedError as exc:
+        print_blocked(exc.reason_code, exc.explanation, exc.details)
+        return 2
+    print_json(result.model_dump(mode="json"))
+    return 0
+
+
 def cmd_sync_repository(args: argparse.Namespace) -> int:
     settings = get_settings()
     client = GitHubHttpClient.from_settings(settings)
@@ -241,6 +376,15 @@ def session_scope() -> Session:
 
 def print_json(payload: object) -> None:
     print(json.dumps(payload, sort_keys=True))
+
+
+def json_object_arg(value: str | None) -> dict[str, object]:
+    if value is None:
+        return {}
+    payload = json.loads(value)
+    if not isinstance(payload, dict):
+        raise ValueError("Expected a JSON object.")
+    return cast(dict[str, object], payload)
 
 
 def print_blocked(
@@ -369,6 +513,66 @@ def build_parser() -> argparse.ArgumentParser:
     )
     reconcile_leases.add_argument("--idempotency-key", required=True)
     reconcile_leases.set_defaults(func=cmd_reconcile_leases)
+
+    worker_runs = subparsers.add_parser(
+        "worker-runs",
+        help="Manage worker run lifecycle records.",
+    )
+    worker_run_subparsers = worker_runs.add_subparsers(
+        dest="worker_run_command", required=True
+    )
+    worker_run_create = worker_run_subparsers.add_parser(
+        "create", help="Start a worker run."
+    )
+    worker_run_create.add_argument("--idempotency-key", required=True)
+    worker_run_create.add_argument("--work-item-id", required=True)
+    worker_run_create.add_argument("--lease-id", required=True)
+    worker_run_create.add_argument("--fencing-token", required=True)
+    worker_run_create.add_argument(
+        "--role",
+        choices=[role.value for role in WorkerRole],
+        default=WorkerRole.WORKER.value,
+    )
+    worker_run_create.set_defaults(func=cmd_worker_runs_create)
+
+    worker_run_show = worker_run_subparsers.add_parser("show", help="Show a run.")
+    worker_run_show.add_argument("worker_run_id")
+    worker_run_show.set_defaults(func=cmd_worker_runs_show)
+
+    worker_run_heartbeat = worker_run_subparsers.add_parser(
+        "heartbeat", help="Refresh a worker run heartbeat."
+    )
+    worker_run_heartbeat.add_argument("worker_run_id")
+    worker_run_heartbeat.add_argument("--idempotency-key", required=True)
+    worker_run_heartbeat.add_argument("--fencing-token", required=True)
+    worker_run_heartbeat.set_defaults(func=cmd_worker_runs_heartbeat)
+
+    worker_run_report = worker_run_subparsers.add_parser(
+        "report", help="Record worker run evidence."
+    )
+    worker_run_report.add_argument("worker_run_id")
+    worker_run_report.add_argument("--idempotency-key", required=True)
+    worker_run_report.add_argument("--fencing-token", required=True)
+    worker_run_report.add_argument("--validation-json")
+    worker_run_report.add_argument("--public-mutations-json")
+    worker_run_report.add_argument("--cost-summary-json")
+    worker_run_report.set_defaults(func=cmd_worker_runs_report)
+
+    worker_run_close = worker_run_subparsers.add_parser(
+        "close", help="Close a worker run."
+    )
+    worker_run_close.add_argument("worker_run_id")
+    worker_run_close.add_argument("--idempotency-key", required=True)
+    worker_run_close.add_argument("--fencing-token", required=True)
+    worker_run_close.add_argument(
+        "--result",
+        choices=[result.value for result in WorkerRunResult],
+        required=True,
+    )
+    worker_run_close.add_argument("--validation-json")
+    worker_run_close.add_argument("--public-mutations-json")
+    worker_run_close.add_argument("--cost-summary-json")
+    worker_run_close.set_defaults(func=cmd_worker_runs_close)
 
     sync = subparsers.add_parser("sync", help="Run adapter sync commands.")
     sync_subparsers = sync.add_subparsers(dest="sync_command", required=True)

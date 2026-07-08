@@ -135,6 +135,92 @@ def test_cli_smoke_for_m1_api_wrappers(
     heartbeat = read_json(capsys)
     assert heartbeat["refreshed"] is True
 
+    assert (
+        main(
+            [
+                "worker-runs",
+                "create",
+                "--idempotency-key",
+                "cli-worker-run-create",
+                "--work-item-id",
+                work_item_id,
+                "--lease-id",
+                lease_id,
+                "--fencing-token",
+                fencing_token,
+            ]
+        )
+        == 0
+    )
+    worker_run = read_json(capsys)
+    worker_run_id = str(worker_run["id"])
+    assert worker_run["status"] == "running"
+
+    assert main(["worker-runs", "show", worker_run_id]) == 0
+    shown_worker_run = read_json(capsys)
+    assert shown_worker_run["lease_id"] == lease_id
+
+    assert (
+        main(
+            [
+                "worker-runs",
+                "heartbeat",
+                worker_run_id,
+                "--idempotency-key",
+                "cli-worker-run-heartbeat",
+                "--fencing-token",
+                fencing_token,
+            ]
+        )
+        == 0
+    )
+    worker_run_heartbeat = read_json(capsys)
+    assert worker_run_heartbeat["status"] == "running"
+
+    assert (
+        main(
+            [
+                "worker-runs",
+                "report",
+                worker_run_id,
+                "--idempotency-key",
+                "cli-worker-run-report",
+                "--fencing-token",
+                fencing_token,
+                "--validation-json",
+                '{"pytest":"passed"}',
+                "--public-mutations-json",
+                '{"pr":7}',
+            ]
+        )
+        == 0
+    )
+    worker_run_report = read_json(capsys)
+    assert worker_run_report["status"] == "reporting"
+    assert worker_run_report["validation"]["pytest"] == "passed"
+
+    assert (
+        main(
+            [
+                "worker-runs",
+                "close",
+                worker_run_id,
+                "--idempotency-key",
+                "cli-worker-run-close",
+                "--fencing-token",
+                fencing_token,
+                "--result",
+                "blocked",
+                "--cost-summary-json",
+                '{"estimated":true}',
+            ]
+        )
+        == 0
+    )
+    worker_run_close = read_json(capsys)
+    assert worker_run_close["status"] == "closed"
+    assert worker_run_close["result"] == "blocked"
+
     assert main(["reconcile", "leases", "--idempotency-key", "cli-reconcile"]) == 0
     reconcile = read_json(capsys)
     assert reconcile["expired_lease_ids"] == []

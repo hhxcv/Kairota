@@ -1,1 +1,43 @@
 """Database model package."""
+
+from kairota.models.records import (
+    AuditEvent,
+    ExternalRef,
+    InboundEvent,
+    Lease,
+    LockHolder,
+    OutboxEvent,
+    RepoCheckSummary,
+    RepoPullRequest,
+    RepoReviewSummary,
+    Repository,
+    SchedulerCycle,
+    SchedulerDecision,
+    SchedulerGuard,
+    SyncCursor,
+    WorkerRun,
+    WorkItem,
+    WorkItemConflictKey,
+    WorkItemDependency,
+)
+
+__all__ = [
+    "AuditEvent",
+    "ExternalRef",
+    "InboundEvent",
+    "Lease",
+    "LockHolder",
+    "OutboxEvent",
+    "RepoCheckSummary",
+    "RepoPullRequest",
+    "RepoReviewSummary",
+    "Repository",
+    "SchedulerCycle",
+    "SchedulerDecision",
+    "SchedulerGuard",
+    "SyncCursor",
+    "WorkItem",
+    "WorkItemConflictKey",
+    "WorkItemDependency",
+    "WorkerRun",
+]

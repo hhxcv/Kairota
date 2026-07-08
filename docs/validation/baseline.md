@@ -12,8 +12,9 @@ doc:
 
 ## Current Repo State
 
-M1 runtime foundation is implemented. Scheduler, work item schema, GitHub sync,
-worker runtime, and queue data flows are not implemented yet.
+M1 runtime foundation is implemented. Core schema and contracts are being
+implemented. Scheduler behavior, GitHub sync, worker runtime, and queue data
+flows are not implemented yet.
 
 ## Checks
 

@@ -10,9 +10,9 @@ doc:
 
 # M1 AI Dev Queue Detailed Design
 
-Status: mixed current and planned. M1.0 runtime foundation is being implemented;
-M1 scheduler, GitHub sync, worker runtime, and queue data flows are not
-implemented yet.
+Status: mixed current and planned. M1.0 runtime foundation is implemented, and
+M1.1 core schema and contracts are being implemented. M1 scheduler behavior,
+GitHub sync, worker runtime, and queue data flows are not implemented yet.
 
 ## Purpose
 
@@ -25,8 +25,9 @@ provider-neutral contracts.
 - M0 has root rules, routing docs, initial contracts, skills, and governance checks.
 - Runtime foundation files now include backend, frontend, configuration, and
   migration scaffolding.
-- There is no product database schema, scheduler, worker runtime, product API,
-  MCP server, webhook receiver, or GitHub adapter implementation yet.
+- Product database schema and Pydantic contracts are being implemented for M1.1.
+- There is no scheduler behavior, worker runtime, product API, MCP server,
+  webhook receiver, or GitHub adapter implementation yet.
 - Existing M1 capability expectations are defined in `MILESTONES.md`.
 
 ## M1 Outcomes

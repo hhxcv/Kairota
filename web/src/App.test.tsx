@@ -27,6 +27,7 @@ describe("App", () => {
       expect(await screen.findByRole("heading", { name: title })).toBeInTheDocument();
     }
     expect(screen.getByRole("heading", { name: "Decision Inbox" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Recovery Signals" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recent Events" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Failures" })).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(

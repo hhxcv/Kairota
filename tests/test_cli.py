@@ -241,6 +241,42 @@ def test_cli_smoke_for_m1_api_wrappers(
     assert sync["reason_code"] == "repository_not_found"
 
 
+def test_cli_demo_seed_workbench_and_m1_exit_smoke(
+    cli_database: None,
+    capsys: CaptureFixture[str],
+) -> None:
+    assert main(["demo", "seed"]) == 0
+    seed = read_json(capsys)
+    assert seed["status"] == "seeded"
+    assert "m1-demo-ready" in seed["work_item_ids"]
+
+    assert main(["queue", "workbench"]) == 0
+    workbench = read_json(capsys)
+    assert [section["id"] for section in workbench["sections"]] == [
+        "ready",
+        "running",
+        "blocked",
+        "waiting",
+        "failed",
+        "done",
+    ]
+    assert workbench["recovery_signals"]
+
+    assert (
+        main(
+            [
+                "smoke",
+                "m1-exit",
+                "--idempotency-prefix",
+                "cli-m1-exit-smoke",
+            ]
+        )
+        == 0
+    )
+    smoke = read_json(capsys)
+    assert smoke["status"] == "passed"
+
+
 def test_cli_reports_claim_blocked(
     cli_database: None,
     capsys: CaptureFixture[str],

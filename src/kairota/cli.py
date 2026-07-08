@@ -31,9 +31,12 @@ from kairota.contracts.schemas import (
     WorkItemCreate,
 )
 from kairota.db import create_session_factory
+from kairota.services.demo_data import seed_m1_demo_data
 from kairota.services.errors import CommandBlockedError
 from kairota.services.github_sync import sync_repository_command
 from kairota.services.idempotency import IdempotencyConflictError
+from kairota.services.m1_exit import run_m1_exit_smoke
+from kairota.services.queue_workbench import queue_workbench
 from kairota.services.scheduler_cycles import (
     claim_work_item_command,
     expire_stale_leases_command,
@@ -169,6 +172,30 @@ def cmd_queue_summary(_args: argparse.Namespace) -> int:
         result = queue_summary(session)
     print_json(result.model_dump(mode="json"))
     return 0
+
+
+def cmd_queue_workbench(_args: argparse.Namespace) -> int:
+    with session_scope() as session:
+        result = queue_workbench(session)
+    print_json(result.model_dump(mode="json"))
+    return 0
+
+
+def cmd_demo_seed(_args: argparse.Namespace) -> int:
+    with session_scope() as session, session.begin():
+        result = seed_m1_demo_data(session)
+    print_json(result.model_dump(mode="json"))
+    return 0
+
+
+def cmd_smoke_m1_exit(args: argparse.Namespace) -> int:
+    with session_scope() as session, session.begin():
+        result = run_m1_exit_smoke(
+            session,
+            idempotency_prefix=args.idempotency_prefix,
+        )
+    print_json(result.model_dump(mode="json"))
+    return 0 if result.status == "passed" else 2
 
 
 def cmd_scheduler_run(args: argparse.Namespace) -> int:
@@ -482,6 +509,27 @@ def build_parser() -> argparse.ArgumentParser:
         "summary", help="Print queue summary."
     )
     queue_summary_parser.set_defaults(func=cmd_queue_summary)
+    queue_workbench_parser = queue_subparsers.add_parser(
+        "workbench", help="Print queue workbench read model."
+    )
+    queue_workbench_parser.set_defaults(func=cmd_queue_workbench)
+
+    demo = subparsers.add_parser("demo", help="Seed local demo data.")
+    demo_subparsers = demo.add_subparsers(dest="demo_command", required=True)
+    demo_seed = demo_subparsers.add_parser("seed", help="Seed M1 queue demo records.")
+    demo_seed.set_defaults(func=cmd_demo_seed)
+
+    smoke = subparsers.add_parser("smoke", help="Run local smoke checks.")
+    smoke_subparsers = smoke.add_subparsers(dest="smoke_command", required=True)
+    smoke_m1_exit = smoke_subparsers.add_parser(
+        "m1-exit", help="Run the M1 exit smoke check."
+    )
+    smoke_m1_exit.add_argument(
+        "--idempotency-prefix",
+        default="m1-exit-smoke",
+        help="Prefix for deterministic smoke idempotency keys.",
+    )
+    smoke_m1_exit.set_defaults(func=cmd_smoke_m1_exit)
 
     scheduler = subparsers.add_parser("scheduler", help="Run scheduler commands.")
     scheduler_subparsers = scheduler.add_subparsers(

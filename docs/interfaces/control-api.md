@@ -12,9 +12,9 @@ doc:
 
 Status: mixed current and planned. Health, work item, queue summary, queue
 workbench, scheduler cycle, claim, lease heartbeat, stale lease reconciliation,
-worker-run lifecycle, GitHub repository sync, and GitHub webhook endpoints are
-implemented through M1.7. MCP and adapter-backed public mutations are not
-implemented yet.
+worker-run lifecycle, GitHub repository sync, GitHub webhook, demo seed, and
+M1 exit smoke surfaces are implemented through M1.8. MCP and adapter-backed
+public mutations are not implemented yet.
 
 ## Planned Interfaces
 
@@ -68,12 +68,14 @@ result; reusing the same key with a different payload returns
 | `health` | implemented |
 | `db-upgrade` / `db-downgrade` | implemented |
 | `work-items create/list/show/claim` | implemented |
-| `queue summary` | implemented |
+| `queue summary/workbench` | implemented |
 | `scheduler run` | implemented |
 | `leases heartbeat` | implemented |
 | `reconcile leases` | implemented |
 | `worker-runs create/show/heartbeat/report/close` | implemented |
 | `sync repository` | implemented; requires `--idempotency-key` |
+| `demo seed` | implemented |
+| `smoke m1-exit` | implemented |
 
 ## Planned Adapter Set
 

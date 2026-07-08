@@ -64,12 +64,22 @@ export type QueueWorkbenchEvent = {
   details: Record<string, unknown>;
 };
 
+export type QueueWorkbenchRecoverySignal = {
+  id: string;
+  title: string;
+  severity: string;
+  count: number;
+  action: string;
+  details: Record<string, unknown>;
+};
+
 export type QueueWorkbench = {
   summary: QueueSummary;
   sections: QueueWorkbenchSection[];
   decision_inbox: QueueWorkbenchRow[];
   recent_events: QueueWorkbenchEvent[];
   failures: QueueWorkbenchEvent[];
+  recovery_signals: QueueWorkbenchRecoverySignal[];
 };
 
 export const sectionTones: Record<SectionId, Tone> = {
@@ -297,6 +307,24 @@ export const demoWorkbench: QueueWorkbench = {
       status: "failed",
       created_at: "2026-07-08T11:21:00Z",
       details: { provider: "github", action: "completed" },
+    },
+  ],
+  recovery_signals: [
+    {
+      id: "failed_inbound_events",
+      title: "Failed inbound events",
+      severity: "warning",
+      count: 1,
+      action: "Inspect failed webhook or poll events",
+      details: { command: "kairota queue workbench" },
+    },
+    {
+      id: "stale_repository_gates",
+      title: "Stale repository gates",
+      severity: "warning",
+      count: 1,
+      action: "Refresh repository summaries",
+      details: { command: "kairota sync repository" },
     },
   ],
 };

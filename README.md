@@ -13,12 +13,13 @@ experience sharing, and consultant-style agents.
 
 ## Status
 
-M1 implementation has started. Current runtime code includes a FastAPI health
-endpoint, CLI entry point, Alembic migrations, Vite React frontend shell, core
-database schema, Pydantic contracts, work item state machine, and pure scheduler
-planner. Claim, lease heartbeat, and stale lease recovery services are being
-implemented. GitHub sync, worker runtime, product API, and queue data flows are
-not implemented yet.
+M1 AI Dev Queue MVP is implemented. Current runtime code includes the FastAPI
+API, CLI, Alembic migrations, Vite React queue workbench, core database schema,
+Pydantic contracts, work item state machine, deterministic scheduler planner,
+claim/lease/conflict-lock services, worker run lifecycle, GitHub sync boundary,
+demo seed data, M1 exit smoke checks, and queue recovery signals.
+
+M2 cost and flow observability is the active planned milestone.
 
 ## Current Commands
 
@@ -28,6 +29,9 @@ python -m pytest
 ruff check src tests migrations
 mypy src
 kairota health
+kairota demo seed
+kairota queue workbench
+kairota smoke m1-exit
 python .agents/checks/check_ai_governance.py
 git diff --check
 ```
@@ -37,6 +41,7 @@ Frontend:
 ```bash
 cd web
 npm install
+npm run test
 npm run build
 ```
 

@@ -12,8 +12,9 @@ doc:
 
 Status: mixed current and planned. M1.0 runtime foundation and M1.1 core schema
 and contracts are implemented. M1.2 state machine and pure scheduler planner are
-being implemented. Claim commands, GitHub sync, worker runtime, and queue data
-flows are not implemented yet.
+implemented. M1.3 claim, lease, and conflict lock services are being
+implemented. GitHub sync, worker runtime, product API, and queue data flows are
+not implemented yet.
 
 ## Purpose
 
@@ -27,10 +28,11 @@ provider-neutral contracts.
 - Runtime foundation files now include backend, frontend, configuration, and
   migration scaffolding.
 - Product database schema and Pydantic contracts are implemented for M1.1.
-- Work item state machine and pure scheduler planner are being implemented for
-  M1.2.
-- There are no claim or lease mutation commands, worker runtime, product API,
-  MCP server, webhook receiver, or GitHub adapter implementation yet.
+- Work item state machine and pure scheduler planner are implemented for M1.2.
+- Claim, lease heartbeat, stale lease expiry, and lease-held lock release
+  services are being implemented for M1.3.
+- There are no worker runtime, product API, MCP server, webhook receiver, or
+  GitHub adapter implementation yet.
 - Existing M1 capability expectations are defined in `MILESTONES.md`.
 
 ## M1 Outcomes

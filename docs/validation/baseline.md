@@ -13,9 +13,9 @@ doc:
 ## Current Repo State
 
 M1 runtime foundation, core schema/contracts, state machine, pure scheduler
-planner, claim and lease services, REST/CLI surfaces, GitHub sync, and worker
-run lifecycle commands are implemented. MCP and queue workbench UI are not
-implemented yet.
+planner, claim and lease services, REST/CLI surfaces, GitHub sync, worker run
+lifecycle commands, and queue workbench UI are implemented. MCP and M1 exit
+hardening are not implemented yet.
 
 ## Checks
 
@@ -31,11 +31,15 @@ Frontend:
 
 ```bash
 cd web
+npm run test
 npm run build
 ```
 
 Migration baseline is validated by tests. Running migrations against a real
 database requires `KAIROTA_DATABASE_URL`.
+
+Browser smoke checks cover the queue workbench layout at desktop and mobile
+viewports before PR merge.
 
 ## Skill Validation
 
@@ -50,4 +54,5 @@ machine-specific paths into public docs.
 
 ## Future Checks
 
-Add scheduler, integration, and browser checks when those runtime slices exist.
+Add M1 exit smoke checks for create or sync, schedule, claim, run reporting,
+reconciliation, and UI visibility when hardening lands.

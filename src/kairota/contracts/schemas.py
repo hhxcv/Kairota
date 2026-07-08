@@ -60,6 +60,63 @@ class QueueSummaryRead(ContractModel):
     active_locks: int
 
 
+class QueueWorkbenchRunRead(ContractModel):
+    id: str
+    lease_id: str | None = None
+    role: WorkerRole
+    status: WorkerRunStatus
+    result: WorkerRunResult | None = None
+    heartbeat_at: datetime | None = None
+    closed_at: datetime | None = None
+
+
+class QueueWorkbenchRowRead(ContractModel):
+    id: str
+    title: str
+    section: str
+    status: WorkItemStatus
+    priority: int
+    risk: RiskLevel
+    work_type: WorkType
+    autonomy_mode: AutonomyMode
+    expected_touch: str | None = None
+    acceptance: str | None = None
+    validation: str | None = None
+    source_url: str | None = None
+    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
+    dependency_ids: tuple[str, ...] = Field(default_factory=tuple)
+    reason_code: str
+    next_action: str
+    worker_run: QueueWorkbenchRunRead | None = None
+    repository: JsonObject = Field(default_factory=dict)
+
+
+class QueueWorkbenchSectionRead(ContractModel):
+    id: str
+    title: str
+    count: int
+    rows: tuple[QueueWorkbenchRowRead, ...] = Field(default_factory=tuple)
+
+
+class QueueWorkbenchEventRead(ContractModel):
+    id: str
+    kind: str
+    summary: str
+    subject_type: str | None = None
+    subject_id: str | None = None
+    status: str | None = None
+    created_at: datetime | None = None
+    details: JsonObject = Field(default_factory=dict)
+
+
+class QueueWorkbenchRead(ContractModel):
+    summary: QueueSummaryRead
+    sections: tuple[QueueWorkbenchSectionRead, ...]
+    decision_inbox: tuple[QueueWorkbenchRowRead, ...] = Field(default_factory=tuple)
+    recent_events: tuple[QueueWorkbenchEventRead, ...] = Field(default_factory=tuple)
+    failures: tuple[QueueWorkbenchEventRead, ...] = Field(default_factory=tuple)
+
+
 class SchedulerDecisionRead(ContractModel):
     id: str
     cycle_id: str

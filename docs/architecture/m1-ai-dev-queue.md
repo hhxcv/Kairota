@@ -12,9 +12,9 @@ doc:
 
 Status: mixed current and planned. M1.0 runtime foundation, M1.1 core schema
 and contracts, M1.2 state machine and pure scheduler planner, M1.3 claim and
-lease services, M1.4 REST API and CLI boundaries, and M1.5 GitHub sync adapter
-boundaries, and M1.6 worker run lifecycle commands are implemented. MCP and
-queue workbench UI are not implemented yet.
+lease services, M1.4 REST API and CLI boundaries, M1.5 GitHub sync adapter
+boundaries, M1.6 worker run lifecycle commands, and M1.7 queue workbench UI are
+implemented. MCP and M1 exit hardening are not implemented yet.
 
 ## Purpose
 
@@ -39,7 +39,11 @@ provider-neutral contracts.
   gate marking, and reducer audit events.
 - Worker run creation, heartbeat, reporting, close, validation evidence, and
   lease/fencing-token guards are implemented for M1.6.
-- There is no MCP server or queue workbench UI yet.
+- Queue workbench read model and React UI are implemented for M1.7 with ready,
+  running, blocked, waiting, failed, and done sections, decision inbox, recent
+  events, failed sync signals, work item detail, worker-run summary, and
+  repository gate summary.
+- There is no MCP server yet.
 - Existing M1 capability expectations are defined in `MILESTONES.md`.
 
 ## M1 Outcomes
@@ -434,6 +438,7 @@ Planned read resources:
 - `GET /work-items`
 - `GET /work-items/{id}`
 - `GET /queue/summary`
+- `GET /queue/workbench`
 - `GET /scheduler/cycles/{id}`
 - `GET /worker-runs/{id}`
 - `GET /repositories/{id}`
@@ -637,6 +642,8 @@ Validate:
 - stale fencing token rejection.
 
 ### M1.7 Queue Workbench UI
+
+Status: implemented.
 
 Deliver:
 

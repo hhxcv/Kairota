@@ -177,6 +177,28 @@ def test_queue_summary_and_work_item_detail(client: TestClient) -> None:
     assert summary.json()["by_status"]["ready"] == 1
 
 
+def test_queue_workbench_endpoint_returns_sections(client: TestClient) -> None:
+    work_item_id = create_ready_work_item(client, "workbench-ready")
+
+    response = client.get("/queue/workbench")
+
+    assert response.status_code == 200
+    payload = response.json()
+    sections = {section["id"]: section for section in payload["sections"]}
+    assert tuple(sections) == (
+        "ready",
+        "running",
+        "blocked",
+        "waiting",
+        "failed",
+        "done",
+    )
+    assert sections["ready"]["count"] == 1
+    assert sections["ready"]["rows"][0]["id"] == work_item_id
+    assert sections["ready"]["rows"][0]["reason_code"] == "ready_for_claim"
+    assert payload["summary"]["by_status"]["ready"] == 1
+
+
 def test_scheduler_cycle_records_decisions(client: TestClient) -> None:
     work_item_id = create_ready_work_item(client)
 

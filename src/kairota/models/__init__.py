@@ -2,6 +2,7 @@
 
 from kairota.models.records import (
     AuditEvent,
+    CommandRequest,
     ExternalRef,
     InboundEvent,
     Lease,
@@ -23,6 +24,7 @@ from kairota.models.records import (
 
 __all__ = [
     "AuditEvent",
+    "CommandRequest",
     "ExternalRef",
     "InboundEvent",
     "Lease",

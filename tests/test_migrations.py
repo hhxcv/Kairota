@@ -16,6 +16,7 @@ def test_baseline_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
     assert {
         "alembic_version",
         "audit_events",
+        "command_requests",
         "external_refs",
         "inbound_events",
         "leases",

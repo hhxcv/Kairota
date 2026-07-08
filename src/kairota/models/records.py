@@ -503,6 +503,32 @@ class OutboxEvent(TimestampMixin, Base):
     last_error: Mapped[str | None] = mapped_column(Text)
 
 
+class CommandRequest(TimestampMixin, Base):
+    __tablename__ = "command_requests"
+    __table_args__ = (
+        UniqueConstraint(
+            "command_name",
+            "idempotency_key",
+            name="uq_command_requests_command_key",
+        ),
+        CheckConstraint(
+            "status in ('running', 'completed', 'failed')",
+            "ck_command_requests_status",
+        ),
+    )
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    command_name: Mapped[str] = mapped_column(String(160), nullable=False)
+    idempotency_key: Mapped[str] = mapped_column(String(240), nullable=False)
+    payload_hash: Mapped[str] = mapped_column(String(128), nullable=False)
+    status: Mapped[str] = mapped_column(String(32), nullable=False, default="running")
+    result_id: Mapped[str | None] = mapped_column(String(160))
+    response_body: Mapped[dict[str, object]] = mapped_column(
+        JSON, nullable=False, default=dict
+    )
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class AuditEvent(TimestampMixin, Base):
     __tablename__ = "audit_events"
 

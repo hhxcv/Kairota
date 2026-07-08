@@ -10,10 +10,11 @@ doc:
 
 # Control API
 
-Status: mixed current and planned. Health, work item, queue summary, scheduler
-cycle, claim, lease heartbeat, stale lease reconciliation, worker-run lifecycle,
-GitHub repository sync, and GitHub webhook endpoints are implemented through
-M1.6. MCP and adapter-backed public mutations are not implemented yet.
+Status: mixed current and planned. Health, work item, queue summary, queue
+workbench, scheduler cycle, claim, lease heartbeat, stale lease reconciliation,
+worker-run lifecycle, GitHub repository sync, and GitHub webhook endpoints are
+implemented through M1.7. MCP and adapter-backed public mutations are not
+implemented yet.
 
 ## Planned Interfaces
 
@@ -42,6 +43,7 @@ M1.6. MCP and adapter-backed public mutations are not implemented yet.
 | `GET` | `/work-items/{id}` | implemented |
 | `POST` | `/work-items` | implemented; requires `Idempotency-Key` |
 | `GET` | `/queue/summary` | implemented |
+| `GET` | `/queue/workbench` | implemented |
 | `POST` | `/scheduler/cycles` | implemented; requires `Idempotency-Key` |
 | `POST` | `/work-items/{id}/claim` | implemented; requires `Idempotency-Key` |
 | `POST` | `/leases/{id}/heartbeat` | implemented; requires `Idempotency-Key` |

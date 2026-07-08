@@ -26,7 +26,7 @@ Status: current.
 Goal: replace GitHub Project for AI development scheduling while keeping the
 core model repository-provider neutral.
 
-Current slice: M1.7 Queue Workbench UI.
+Current slice: M1.8 Hardening And M1 Exit.
 
 Expected capabilities:
 

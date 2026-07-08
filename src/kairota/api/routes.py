@@ -22,6 +22,7 @@ from kairota.contracts.schemas import (
     LeaseHeartbeatCommand,
     LeaseHeartbeatRead,
     QueueSummaryRead,
+    QueueWorkbenchRead,
     RepositorySyncRead,
     SchedulerCycleCreate,
     SchedulerCycleRead,
@@ -39,6 +40,7 @@ from kairota.services.github_sync import (
     sync_repository_command,
 )
 from kairota.services.idempotency import IdempotencyConflictError
+from kairota.services.queue_workbench import queue_workbench
 from kairota.services.scheduler_cycles import (
     claim_work_item_command,
     expire_stale_leases_command,
@@ -114,6 +116,11 @@ def api_create_work_item(
 @router.get("/queue/summary", response_model=QueueSummaryRead)
 def api_queue_summary(session: SessionDependency) -> QueueSummaryRead:
     return queue_summary(session)
+
+
+@router.get("/queue/workbench", response_model=QueueWorkbenchRead)
+def api_queue_workbench(session: SessionDependency) -> QueueWorkbenchRead:
+    return queue_workbench(session)
 
 
 @router.post("/scheduler/cycles", response_model=SchedulerCycleRead)

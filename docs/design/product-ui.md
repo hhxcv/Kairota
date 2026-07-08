@@ -2,20 +2,20 @@
 doc:
   updated_at: 2026-07-08
   category: design
-  status: draft
+  status: mixed-current-planned
   audience: ai
   keywords: [ui, dashboard, workbench, product-design]
-  description: "Defines the planned Kairota UI surfaces and design priorities."
+  description: "Defines Kairota UI surfaces and design priorities."
 ---
 
 # Product UI
 
-Status: draft. No UI is implemented yet.
+Status: mixed current and planned. The M1 queue workbench is implemented.
+Cost, project management, and cross-project experience surfaces are planned.
 
-## First Screen
+## Implemented First Screen
 
-The first implemented UI should be an operational queue surface, not a marketing
-landing page.
+The first UI is an operational queue surface, not a marketing landing page.
 
 Primary regions:
 
@@ -25,6 +25,8 @@ Primary regions:
 - Waiting repository checks or review.
 - Human or delegated AI decision inbox.
 - Recent events and failures.
+- Selected work item detail with scheduling facts, worker-run state, and
+  repository gate summary when present.
 
 ## Design Principles
 

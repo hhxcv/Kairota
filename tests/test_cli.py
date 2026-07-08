@@ -45,6 +45,23 @@ def test_cli_smoke_for_m1_api_wrappers(
     cli_database: None,
     capsys: CaptureFixture[str],
 ) -> None:
+    assert (
+        main(
+            [
+                "repositories",
+                "register",
+                "--idempotency-key",
+                "cli-register",
+                "--remote",
+                "https://github.com/owner/repo.git",
+            ]
+        )
+        == 0
+    )
+    repository = read_json(capsys)
+    repository_id = str(repository["id"])
+    assert repository["name"] == "owner/repo"
+
     create_code = main(
         [
             "work-items",
@@ -53,10 +70,88 @@ def test_cli_smoke_for_m1_api_wrappers(
             "cli-create",
             "--title",
             "CLI work",
-            "--status",
-            "ready",
+            "--repository-id",
+            repository_id,
             "--priority",
             "10",
+        ]
+    )
+    created = read_json(capsys)
+    work_item_id = str(created["id"])
+    assert create_code == 0
+    assert created["status"] == "needs_triage"
+
+    assert (
+        main(
+            [
+                "work-items",
+                "triage",
+                work_item_id,
+                "--idempotency-key",
+                "cli-triage",
+                "--status",
+                "ready",
+                "--priority",
+                "10",
+                "--expected-touch",
+                "src/kairota/cli.py",
+                "--acceptance",
+                "CLI command works",
+                "--validation",
+                "pytest",
+                "--conflict-key",
+                "runtime:cli",
+            ]
+        )
+        == 0
+    )
+    triaged = read_json(capsys)
+    assert triaged["status"] == "ready"
+
+    assert (
+        main(
+            [
+                "queue",
+                "ready",
+                "--repository-id",
+                repository_id,
+            ]
+        )
+        == 0
+    )
+    ready = json.loads(capsys.readouterr().out)
+    assert ready[0]["id"] == work_item_id
+
+    assert (
+        main(
+            [
+                "queue",
+                "claim-next",
+                "--idempotency-key",
+                "cli-claim-next",
+                "--owner",
+                "slot-claim-next",
+                "--repository-id",
+                repository_id,
+            ]
+        )
+        == 0
+    )
+    claim_next = read_json(capsys)
+    assert claim_next["work_item_id"] == work_item_id
+
+    second_create_code = main(
+        [
+            "work-items",
+            "create",
+            "--idempotency-key",
+            "cli-create-second",
+            "--title",
+            "Second CLI work",
+            "--repository-id",
+            repository_id,
+            "--status",
+            "ready",
             "--expected-touch",
             "src/kairota/cli.py",
             "--acceptance",
@@ -64,12 +159,12 @@ def test_cli_smoke_for_m1_api_wrappers(
             "--validation",
             "pytest",
             "--conflict-key",
-            "runtime:cli",
+            "runtime:cli-second",
         ]
     )
     created = read_json(capsys)
     work_item_id = str(created["id"])
-    assert create_code == 0
+    assert second_create_code == 0
     assert created["status"] == "ready"
 
     assert main(["work-items", "show", work_item_id]) == 0
@@ -91,6 +186,8 @@ def test_cli_smoke_for_m1_api_wrappers(
                 "run",
                 "--idempotency-key",
                 "cli-cycle",
+                "--repository-id",
+                repository_id,
                 "--capacity",
                 "1",
             ]

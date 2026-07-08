@@ -16,6 +16,8 @@ from kairota.api.deps import get_github_client, get_session
 from kairota.contracts.enums import WorkItemStatus
 from kairota.contracts.schemas import (
     BlockedCommandResponse,
+    ClaimNextWorkItemCommand,
+    ClaimNextWorkItemRead,
     ClaimWorkItemCommand,
     ClaimWorkItemRead,
     LeaseExpiryRead,
@@ -23,6 +25,8 @@ from kairota.contracts.schemas import (
     LeaseHeartbeatRead,
     QueueSummaryRead,
     QueueWorkbenchRead,
+    RepositoryCreate,
+    RepositoryRead,
     RepositorySyncRead,
     SchedulerCycleCreate,
     SchedulerCycleRead,
@@ -33,6 +37,7 @@ from kairota.contracts.schemas import (
     WorkerRunReportCommand,
     WorkItemCreate,
     WorkItemRead,
+    WorkItemTriageCommand,
 )
 from kairota.services.errors import CommandBlockedError
 from kairota.services.github_sync import (
@@ -41,7 +46,13 @@ from kairota.services.github_sync import (
 )
 from kairota.services.idempotency import IdempotencyConflictError
 from kairota.services.queue_workbench import queue_workbench
+from kairota.services.repositories import (
+    get_repository,
+    list_repositories,
+    register_repository_command,
+)
 from kairota.services.scheduler_cycles import (
+    claim_next_work_item_command,
     claim_work_item_command,
     expire_stale_leases_command,
     heartbeat_lease_command,
@@ -52,6 +63,7 @@ from kairota.services.work_items import (
     get_work_item,
     list_work_items,
     queue_summary,
+    triage_work_item_command,
 )
 from kairota.services.worker_runs import (
     close_worker_run_command,
@@ -72,8 +84,9 @@ GitHubClientDependency = Annotated[GitHubClient, Depends(get_github_client)]
 def api_list_work_items(
     session: SessionDependency,
     status: WorkItemStatus | None = None,
+    repository_id: str | None = None,
 ) -> tuple[WorkItemRead, ...]:
-    return list_work_items(session, status=status)
+    return list_work_items(session, status=status, repository_id=repository_id)
 
 
 @router.get("/work-items/{work_item_id}", response_model=WorkItemRead)
@@ -113,14 +126,93 @@ def api_create_work_item(
         return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
 
 
+@router.post("/work-items/{work_item_id}/triage", response_model=WorkItemRead)
+def api_triage_work_item(
+    work_item_id: str,
+    command: WorkItemTriageCommand,
+    session: SessionDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> WorkItemRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /work-items/{id}/triage requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            return triage_work_item_command(
+                session,
+                work_item_id=work_item_id,
+                command=command,
+                idempotency_key=idempotency_key,
+                actor="api",
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+
+
 @router.get("/queue/summary", response_model=QueueSummaryRead)
-def api_queue_summary(session: SessionDependency) -> QueueSummaryRead:
-    return queue_summary(session)
+def api_queue_summary(
+    session: SessionDependency,
+    repository_id: str | None = None,
+) -> QueueSummaryRead:
+    return queue_summary(session, repository_id=repository_id)
 
 
 @router.get("/queue/workbench", response_model=QueueWorkbenchRead)
-def api_queue_workbench(session: SessionDependency) -> QueueWorkbenchRead:
-    return queue_workbench(session)
+def api_queue_workbench(
+    session: SessionDependency,
+    repository_id: str | None = None,
+) -> QueueWorkbenchRead:
+    return queue_workbench(session, repository_id=repository_id)
+
+
+@router.get("/queue/ready", response_model=tuple[WorkItemRead, ...])
+def api_queue_ready(
+    session: SessionDependency,
+    repository_id: str | None = None,
+) -> tuple[WorkItemRead, ...]:
+    return list_work_items(
+        session,
+        status=WorkItemStatus.READY,
+        repository_id=repository_id,
+    )
+
+
+@router.post("/queue/claim-next", response_model=ClaimNextWorkItemRead)
+def api_claim_next_work_item(
+    command: ClaimNextWorkItemCommand,
+    session: SessionDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> ClaimNextWorkItemRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /queue/claim-next requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            result = claim_next_work_item_command(
+                session,
+                command=command,
+                idempotency_key=idempotency_key,
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+    if not result.claimed:
+        return blocked_response(
+            409,
+            str(result.reason or "no_schedulable_work"),
+            result.explanation or "No schedulable work item was found.",
+            {"repository_id": command.repository_id},
+        )
+    return result
 
 
 @router.post("/scheduler/cycles", response_model=SchedulerCycleRead)
@@ -144,6 +236,8 @@ def api_run_scheduler_cycle(
             )
     except IdempotencyConflictError as exc:
         return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
 
 
 @router.post("/work-items/{work_item_id}/claim", response_model=ClaimWorkItemRead)
@@ -357,6 +451,48 @@ def api_close_worker_run(
         return blocked_response(409, "idempotency_conflict", str(exc))
     except CommandBlockedError as exc:
         return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+
+
+@router.post("/repositories", response_model=RepositoryRead)
+def api_register_repository(
+    command: RepositoryCreate,
+    session: SessionDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> RepositoryRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /repositories requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            return register_repository_command(
+                session,
+                command=command,
+                idempotency_key=idempotency_key,
+                actor="api",
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+
+
+@router.get("/repositories", response_model=tuple[RepositoryRead, ...])
+def api_list_repositories(session: SessionDependency) -> tuple[RepositoryRead, ...]:
+    return list_repositories(session)
+
+
+@router.get("/repositories/{repository_id}", response_model=RepositoryRead)
+def api_get_repository(
+    repository_id: str,
+    session: SessionDependency,
+) -> RepositoryRead:
+    repository = get_repository(session, repository_id)
+    if repository is None:
+        raise HTTPException(status_code=404, detail="Repository not found.")
+    return repository
 
 
 @router.post("/repositories/{repository_id}/sync", response_model=RepositorySyncRead)

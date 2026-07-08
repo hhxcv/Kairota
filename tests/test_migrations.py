@@ -39,6 +39,14 @@ def test_baseline_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
         column["name"] for column in inspect(engine).get_columns("worker_runs")
     }
     assert {"started_at", "heartbeat_at", "closed_at"} <= worker_run_columns
+    work_item_columns = {
+        column["name"] for column in inspect(engine).get_columns("work_items")
+    }
+    scheduler_cycle_columns = {
+        column["name"] for column in inspect(engine).get_columns("scheduler_cycles")
+    }
+    assert "repository_id" in work_item_columns
+    assert "repository_id" in scheduler_cycle_columns
 
     command.downgrade(config, "base")
     with engine.connect() as connection:

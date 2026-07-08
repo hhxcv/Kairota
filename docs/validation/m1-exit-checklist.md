@@ -19,10 +19,12 @@ merged.
 | --- | --- |
 | Scheduler truth is stored in Kairota tables | migrations, model constraints, scheduler and claim tests |
 | GitHub state is normalized before scheduler use | GitHub normalizer, webhook, sync, and reducer tests |
-| Queue states are visible | `kairota demo seed`, `kairota queue workbench`, frontend tests, browser smoke |
+| Queue states are visible | `kairota queue workbench`, frontend tests, browser smoke |
 | Claims require leases and locks | claim tests and M1 exit smoke |
 | Worker runs record validation evidence | worker run tests and M1 exit smoke |
 | Stale leases and failed sync are recoverable or visible | `kairota smoke m1-exit`, queue recovery signals |
+| Managed-project dogfood works | `python -m pytest tests/test_managed_project_dogfood.py` |
+| UI does not use fake fallback data | frontend tests and product code review |
 | Public examples avoid local-only information | governance check and public-text review |
 
 ## Required Commands
@@ -46,10 +48,12 @@ npm run build
 M1 exit smoke after installing the package and migrating a local database:
 
 ```bash
-kairota demo seed
 kairota queue workbench
 kairota smoke m1-exit
 ```
+
+`kairota demo seed` may be used as a development fixture before the smoke
+commands, but product behavior must not depend on fake queue data.
 
 ## Manual Review
 

@@ -2,7 +2,7 @@
 doc:
   updated_at: 2026-07-08
   category: contract
-  status: draft
+  status: mixed-current-planned
   audience: ai
   keywords: [scheduler, lease, claim, conflict-lock]
   description: "Defines planned scheduler contracts for deterministic AI work assignment."
@@ -10,17 +10,34 @@ doc:
 
 # Scheduler
 
-Status: draft. No scheduler is implemented yet.
+Status: mixed current and planned. Deterministic scheduler planning,
+repository-scoped candidate loading, claim-next, leases, lease heartbeats,
+stale lease expiry, conflict locks, scheduler decision records, and blocked
+reason codes are implemented. MCP exposure and broader capacity policy remain
+planned.
 
 ## Planned Responsibilities
 
-- Select ready work items.
+- Select ready work items for the whole queue or a registered repository.
 - Enforce dependencies.
 - Enforce conflict locks.
 - Enforce worker capacity.
-- Claim work with a lease.
+- Claim work with a lease and fencing token.
 - Record why work was assigned or rejected.
-- Reconcile repository review, check, worker, and merge events.
+- Reconcile repository review, check, worker, and merge events through service
+  commands and sync reducers.
+
+## Implemented Surfaces
+
+| Surface | Purpose |
+| --- | --- |
+| `POST /scheduler/cycles` | Records deterministic planning decisions for a queue or repository scope. |
+| `GET /queue/ready` | Lists ready work, optionally by repository id. |
+| `POST /queue/claim-next` | Plans and claims the next schedulable work item in one idempotent command. |
+| `GET /queue/summary` | Reads status, active lease, and active lock counts. |
+| `GET /queue/workbench` | Reads the human queue view, optionally by repository id. |
+| `POST /leases/{id}/heartbeat` | Refreshes valid lease authority. |
+| `POST /reconcile/leases/expire` | Expires stale leases and releases their locks. |
 
 ## Determinism
 
@@ -59,8 +76,13 @@ Default serial areas:
 - shared contracts;
 - security or privacy boundaries.
 
+Repository scoping filters candidate work items by `repository_id`, but active
+conflict locks remain global so two projects cannot accidentally mutate a shared
+Kairota runtime surface in parallel.
+
 ## Non-Goals
 
 - AI semantic triage inside the deterministic scheduler.
 - Direct code editing.
 - Direct merging that bypasses repository gates.
+- Deciding issue dependency relationships without managed-project AI input.

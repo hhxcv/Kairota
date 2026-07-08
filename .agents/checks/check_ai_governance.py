@@ -117,6 +117,28 @@ def check_skills(errors: list[str]) -> None:
         if "TODO" in text:
             fail(errors, path, "contains template TODO")
 
+    public_skills = sorted((ROOT / "skills").glob("*/SKILL.md"))
+    for path in public_skills:
+        text = read_text(path)
+        meta = parse_skill_frontmatter(text)
+        if not meta.get("name"):
+            fail(errors, path, "missing skill name")
+        if not meta.get("description"):
+            fail(errors, path, "missing skill description")
+        if meta.get("name") != path.parent.name:
+            fail(errors, path, "skill name must match folder name")
+        if not path.parent.name.startswith(SKILL_PREFIX):
+            fail(errors, path, f"skill folder must start with {SKILL_PREFIX}")
+        if "TODO" in text:
+            fail(errors, path, "contains template TODO")
+
+        dogfood_path = ROOT / ".agents" / "skills" / path.parent.name / "SKILL.md"
+        if not dogfood_path.exists():
+            fail(errors, path, "missing dogfood copy in .agents/skills")
+            continue
+        if read_text(dogfood_path) != text:
+            fail(errors, path, "dogfood copy in .agents/skills is out of sync")
+
 
 def check_root_files(errors: list[str]) -> None:
     for name in ("AGENTS.md", "README.md", "MILESTONES.md"):
@@ -130,6 +152,7 @@ def check_text_hygiene(errors: list[str]) -> None:
         *ROOT.glob("*.md"),
         *ROOT.glob("*.yaml"),
         *(ROOT / "docs").rglob("*.md"),
+        *(ROOT / "skills").rglob("*.md"),
         *(ROOT / ".agents").rglob("*.md"),
         *(ROOT / ".agents").rglob("*.yaml"),
         *(ROOT / ".agents").rglob("*.py"),

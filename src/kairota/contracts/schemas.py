@@ -34,6 +34,7 @@ class ContractModel(BaseModel):
 
 class WorkItemCreate(ContractModel):
     title: str = Field(min_length=1, max_length=240)
+    repository_id: str | None = None
     status: WorkItemStatus = WorkItemStatus.NEEDS_TRIAGE
     priority: int = Field(default=100, ge=0)
     risk: RiskLevel = RiskLevel.MEDIUM
@@ -72,6 +73,7 @@ class QueueWorkbenchRunRead(ContractModel):
 
 class QueueWorkbenchRowRead(ContractModel):
     id: str
+    repository_id: str | None = None
     title: str
     section: str
     status: WorkItemStatus
@@ -158,12 +160,14 @@ class SchedulerDecisionRead(ContractModel):
 
 class SchedulerCycleCreate(ContractModel):
     queue_key: str = Field(default="default", min_length=1, max_length=160)
+    repository_id: str | None = None
     capacity: int = Field(default=1, ge=0, le=100)
 
 
 class SchedulerCycleRead(ContractModel):
     id: str
     queue_key: str
+    repository_id: str | None = None
     result: str
     assigned_count: int
     rejected_count: int
@@ -187,6 +191,21 @@ class ClaimWorkItemCommand(ContractModel):
 class ClaimWorkItemRead(ContractModel):
     claimed: bool
     work_item_id: str
+    lease_id: str | None = None
+    fencing_token: str | None = None
+    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
+    reason: SchedulerDecisionCode | None = None
+    explanation: str | None = None
+
+
+class ClaimNextWorkItemCommand(ClaimWorkItemCommand):
+    repository_id: str | None = None
+    queue_key: str = Field(default="default", min_length=1, max_length=160)
+
+
+class ClaimNextWorkItemRead(ContractModel):
+    claimed: bool
+    work_item_id: str | None = None
     lease_id: str | None = None
     fencing_token: str | None = None
     conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
@@ -261,6 +280,27 @@ class WorkerRunReportCommand(ContractModel):
 
 class WorkerRunCloseCommand(WorkerRunReportCommand):
     result: WorkerRunResult
+
+
+class WorkItemTriageCommand(ContractModel):
+    status: WorkItemStatus = WorkItemStatus.READY
+    priority: int = Field(default=100, ge=0)
+    risk: RiskLevel = RiskLevel.MEDIUM
+    work_type: WorkType = WorkType.IMPLEMENTATION
+    autonomy_mode: AutonomyMode = AutonomyMode.AI_ASSISTED
+    expected_touch: str | None = None
+    acceptance: str | None = None
+    validation: str | None = None
+    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
+    dependency_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+
+class RepositoryCreate(ContractModel):
+    provider: RepositoryProvider = RepositoryProvider.GITHUB
+    remote: str | None = None
+    name: str | None = None
+    provider_repo_id: str | None = None
+    default_branch: str = "main"
 
 
 class RepositoryRead(ContractModel):

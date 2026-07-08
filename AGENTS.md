@@ -1,7 +1,8 @@
 # AGENTS.md
 
-Root rules only. Detailed workflows live in `.agents/skills/`. Durable project
-facts live in `docs/`. Milestone state lives in `MILESTONES.md`.
+Root rules only. Detailed workflows live in `.agents/skills/`. Installable
+managed-project skills live in `skills/`. Durable project facts live in `docs/`.
+Milestone state lives in `MILESTONES.md`.
 
 ## Scope
 
@@ -96,6 +97,8 @@ and copied terminal output that contains local-only environment details.
 - README: human overview and common commands.
 - `AGENTS.md`: root AI rules only.
 - `.agents/skills/`: Kairota-specific AI workflows only.
+- `skills/`: installable Kairota skills for other managed projects. Dogfood
+  copies used by Kairota itself also live in `.agents/skills/`.
 - `docs/`: durable project facts: architecture, design, interfaces, contracts,
   standards, validation, and governance.
 - `docs/README.md`: docs routing index.

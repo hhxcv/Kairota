@@ -107,6 +107,7 @@ class WorkItem(TimestampMixin, Base):
     validation: Mapped[str | None] = mapped_column(Text)
     expected_touch: Mapped[str | None] = mapped_column(Text)
     source_url: Mapped[str | None] = mapped_column(String(500))
+    repository_id: Mapped[str | None] = mapped_column(ForeignKey("repositories.id"))
 
 
 class WorkItemDependency(Base):
@@ -218,6 +219,7 @@ class SchedulerCycle(TimestampMixin, Base):
 
     id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
     queue_key: Mapped[str] = mapped_column(String(160), nullable=False)
+    repository_id: Mapped[str | None] = mapped_column(ForeignKey("repositories.id"))
     input_version: Mapped[str | None] = mapped_column(String(160))
     result: Mapped[str] = mapped_column(String(32), nullable=False, default="planned")
     assigned_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)

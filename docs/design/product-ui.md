@@ -17,6 +17,9 @@ are planned.
 ## Implemented First Screen
 
 The first UI is an operational queue surface, not a marketing landing page.
+It renders Kairota API read models. If API data is unavailable, it shows an
+explicit empty or unavailable state; it must not fall back to fake queue data in
+product runtime.
 
 Primary regions:
 

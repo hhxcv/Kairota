@@ -17,6 +17,7 @@ fact source.
 | --- | --- | --- | --- |
 | Understand product scope and system shape | architecture, control-plane, scope | `docs/architecture/control-plane.md` | Contract details |
 | Plan or implement M1 AI Dev Queue | m1, ai-dev-queue, scheduler, implementation-plan | `docs/architecture/m1-ai-dev-queue.md` | Cost or experience docs |
+| Manage another project with Kairota | managed-project, dogfood, skill, repository | `skills/kairota-managed-project/SKILL.md` | Cost or experience docs |
 | Design or review the first UI | ui, dashboard, workbench, design | `docs/design/product-ui.md` | Backend contracts |
 | Define or inspect work item facts | work-item, issue, task, status | `docs/contracts/work-items.md` | Scheduler internals |
 | Define or inspect scheduler behavior | scheduler, lease, claim, lock | `docs/contracts/scheduler.md` | UI design |

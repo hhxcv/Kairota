@@ -34,9 +34,38 @@ Expected capabilities:
 - Repository PR, CI, and review summary sync, with GitHub as the first adapter.
 - UI for ready, blocked, running, waiting, failed, and done work.
 
-## Active: M2 Cost And Flow Observability
+## Active: M1.9 Managed Project Dogfood Onboarding
 
 Status: current.
+
+Goal: make Kairota usable as a local service that manages other GitHub
+projects, while eating its own dogfood on Kairota work.
+
+Expected capabilities:
+
+- Register a GitHub repository with Kairota through REST or CLI.
+- Keep synced issues scoped to the registered repository.
+- Let the managed project's AI define dependencies, conflict keys, expected
+  touch, acceptance, validation, priority, risk, and readiness.
+- Query and claim ready work by registered repository.
+- Provide a root `skills/` skill that other projects can install to learn how
+  to use Kairota.
+- Keep a synced dogfood copy of that managed-project skill in `.agents/skills/`.
+- Remove product reliance on fake queue data; UI shows API data or an empty
+  unavailable state.
+- Validate the managed-project loop end to end against Kairota-shaped GitHub
+  issue sync and worker scheduling.
+
+Out of scope:
+
+- Kairota inferring issue dependencies semantically by itself.
+- Replacing GitHub, CI, git, or repository-specific tests.
+- MCP server exposure.
+- M2 cost and flow analytics.
+
+## Planned: M2 Cost And Flow Observability
+
+Status: planned.
 
 Goal: measure and improve AI development cost and throughput.
 

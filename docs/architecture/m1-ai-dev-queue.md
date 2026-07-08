@@ -10,8 +10,8 @@ doc:
 
 # M1 AI Dev Queue Detailed Design
 
-Status: current. M1.0 through M1.8 are implemented. MCP remains planned outside
-the M1 exit scope.
+Status: current. M1.0 through M1.8 are implemented. M1.9 managed-project
+dogfood onboarding is active. MCP remains planned outside the M1 exit scope.
 
 ## Purpose
 
@@ -40,8 +40,13 @@ provider-neutral contracts.
   running, blocked, waiting, failed, and done sections, decision inbox, recent
   events, failed sync signals, work item detail, worker-run summary, and
   repository gate summary.
-- M1.8 adds queue recovery signals, deterministic demo seed data, M1 exit smoke
-  checks, documented local validation commands, and an acceptance checklist.
+- M1.8 adds queue recovery signals, development demo seed fixtures, M1 exit
+  smoke checks, documented local validation commands, and an acceptance
+  checklist.
+- M1.9 adds managed repository registration, repository-scoped issue sync,
+  work-item triage, ready queue queries, claim-next, root managed-project skill,
+  dogfood skill sync into `.agents/skills/`, and automated Kairota dogfood flow
+  coverage.
 - There is no MCP server yet; it remains planned outside the M1 exit scope.
 - M1 capability expectations are defined in `MILESTONES.md`.
 
@@ -120,6 +125,10 @@ M1 is done when a single local operator can:
 ## Planned System Shape
 
 ```text
+Managed project AI + installed Kairota skill
+        |
+        +--> triage facts, claims, worker reports
+        |
 GitHub issue, PR, check, and review data
         |
         v
@@ -140,20 +149,21 @@ Kairota contracts in Postgres
 Adapters may read external state and request bounded mutations. They do not own
 work item status, scheduling eligibility, leases, or conflict locks.
 
-## Planned Data Model
+## Data Model
 
-These are planned tables or equivalent persisted records. Names may change during
-implementation, but the ownership boundaries should not.
+These records are implemented for the M1 scheduler core unless noted as future
+extension. Names may change in later migrations, but the ownership boundaries
+should not.
 
 | Record | Owns |
 | --- | --- |
-| `work_items` | Title, status, priority, risk, work type, autonomy mode, acceptance, validation, source link, expected touch summary. |
+| `work_items` | Repository scope, title, status, priority, risk, work type, autonomy mode, acceptance, validation, source link, expected touch summary. |
 | `work_item_dependencies` | Directed dependency edges between Kairota work items. |
 | `work_item_conflict_keys` | Explicit locks requested by a work item. |
 | `repositories` | Provider-neutral repository identity, provider, default branch, sync status. |
 | `external_refs` | Provider, external type, external id, URL, and link to a Kairota record. |
 | `scheduler_guards` | One persisted guard row per queue or project used to serialize scheduler cycles. |
-| `scheduler_cycles` | Scheduler run id, input version, counts, start/end, result. |
+| `scheduler_cycles` | Queue and optional repository scope, scheduler run id, input version, counts, start/end, result. |
 | `scheduler_decisions` | Work item, decision code, explanation, blocking facts, and cycle id. |
 | `leases` | Work item, logical owner slot, status, fencing token, acquired/heartbeat/expires timestamps. |
 | `lock_holders` | Active conflict key holder from a lease, PR, or conservative fallback. |
@@ -400,6 +410,9 @@ These shortcuts are not acceptable for M1 implementation:
 - releasing conflict locks only because a worker lease expired while a PR is
   still open or merge-armed;
 - hiding stale, incomplete, or failed sync state from the UI.
+- using fake queue data as the product UI fallback. Demo seed data may exist as
+  a development fixture, but browser runtime must show API data or an explicit
+  empty/unavailable state.
 
 ## GitHub Adapter Boundary
 
@@ -432,28 +445,31 @@ Webhook handling:
 REST is the first stable integration surface. API handlers call domain services;
 they do not mutate tables directly.
 
-Planned read resources:
+Implemented read resources:
 
 - `GET /work-items`
 - `GET /work-items/{id}`
 - `GET /queue/summary`
 - `GET /queue/workbench`
-- `GET /scheduler/cycles/{id}`
+- `GET /queue/ready`
 - `GET /worker-runs/{id}`
+- `GET /repositories`
 - `GET /repositories/{id}`
-- `GET /events`
 
-Planned command resources:
+Implemented command resources:
 
 - `POST /work-items`
 - `POST /work-items/{id}/triage`
 - `POST /scheduler/cycles`
+- `POST /queue/claim-next`
 - `POST /work-items/{id}/claim`
 - `POST /leases/{id}/heartbeat`
+- `POST /reconcile/leases/expire`
 - `POST /worker-runs`
 - `POST /worker-runs/{id}/heartbeat`
 - `POST /worker-runs/{id}/report`
 - `POST /worker-runs/{id}/close`
+- `POST /repositories`
 - `POST /repositories/{id}/sync`
 - `POST /webhooks/github`
 
@@ -469,13 +485,15 @@ Command rules:
 The CLI exists for local administration and validation, not as a separate product
 contract.
 
-Planned commands:
+Implemented commands:
 
 - initialize or migrate the database;
-- create or inspect work items;
-- run one scheduler cycle;
+- create, inspect, triage, or claim work items;
+- register, list, or inspect repositories;
+- list ready work and claim the next schedulable item;
+- run one repository-scoped or unscoped scheduler cycle;
 - sync one repository;
-- print queue summary;
+- print queue summary or workbench data;
 - run reconciliation once;
 - run smoke validation.
 
@@ -667,7 +685,7 @@ Status: implemented.
 Deliver:
 
 - reconciliation dashboard signals;
-- seeded demo data;
+- seeded demo data as a development fixture;
 - documented setup and validation commands;
 - M1 acceptance checklist.
 
@@ -679,13 +697,47 @@ Validate:
   and review gate;
 - governance and docs checks.
 
+### M1.9 Managed Project Dogfood Onboarding
+
+Status: current.
+
+Deliver:
+
+- repository registration through REST and CLI;
+- repository id on synced and manually created work items;
+- repository-scoped scheduler cycles, ready queue reads, queue workbench reads,
+  and claim-next;
+- work-item triage command for managed-project AI to submit dependencies,
+  expected touch, conflict keys, acceptance, validation, risk, priority, and
+  readiness;
+- root `skills/kairota-managed-project` for other repositories to install;
+- synced `.agents/skills/kairota-managed-project` dogfood copy;
+- governance check that validates public Kairota skills and dogfood sync;
+- product UI empty/unavailable state instead of fake data fallback;
+- automated dogfood test that registers a Kairota-shaped repository, syncs an
+  issue, triages it, plans it, claims it, records worker progress, and shows it
+  in the scoped workbench.
+
+Validate:
+
+- API tests for repository registration, triage, and scoped claim-next;
+- CLI smoke for repository registration, triage, ready queue, and scoped
+  claim-next;
+- GitHub sync tests that attach synced issues to the registered repository;
+- frontend tests proving API data rendering and empty state on API failure;
+- dogfood end-to-end test in `tests/test_managed_project_dogfood.py`;
+- governance check for root skill and `.agents` dogfood synchronization.
+
 ## Definition Of Done For M1
 
 - Scheduler truth is stored in Kairota-owned tables.
 - GitHub state is normalized into Kairota contracts before scheduler use.
 - Ready, blocked, running, waiting, failed, and done states are visible in UI.
+- The UI does not fall back to fake product data when API data is unavailable.
 - Claims require leases and leases create active conflict locks.
 - Stale leases and failed sync events are recoverable and auditable.
+- Managed-project usage is documented in the root installable skill and validated
+  by a dogfood flow.
 - Validation includes deterministic scheduler tests and real Postgres lock tests.
 - Public docs and examples avoid local-only or private information.
 

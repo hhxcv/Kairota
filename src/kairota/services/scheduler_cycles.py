@@ -13,6 +13,8 @@ from kairota.contracts.enums import (
     WorkItemStatus,
 )
 from kairota.contracts.schemas import (
+    ClaimNextWorkItemCommand,
+    ClaimNextWorkItemRead,
     ClaimWorkItemCommand,
     ClaimWorkItemRead,
     LeaseExpiryRead,
@@ -25,6 +27,7 @@ from kairota.contracts.schemas import (
 from kairota.models.records import (
     Lease,
     LockHolder,
+    Repository,
     SchedulerCycle,
     SchedulerDecision,
     SchedulerGuard,
@@ -41,6 +44,7 @@ from kairota.scheduler.planner import (
     WorkItemPlanInput,
     plan_scheduler_cycle,
 )
+from kairota.services.errors import CommandBlockedError
 from kairota.services.idempotency import JsonObject, run_idempotent_command
 from kairota.services.work_items import conflict_key_map, dependency_map
 
@@ -54,8 +58,9 @@ def run_scheduler_cycle_command(
     payload = cast(JsonObject, command.model_dump(mode="json"))
 
     def execute() -> JsonObject:
+        validate_repository_scope(session, command.repository_id)
         ensure_scheduler_guard(session, command.queue_key)
-        candidates = load_plan_candidates(session)
+        candidates = load_plan_candidates(session, repository_id=command.repository_id)
         completed_ids = load_completed_work_item_ids(session)
         active_conflicts = load_active_conflict_keys(session)
         plan = plan_scheduler_cycle(
@@ -69,6 +74,7 @@ def run_scheduler_cycle_command(
 
         cycle = SchedulerCycle(
             queue_key=command.queue_key,
+            repository_id=command.repository_id,
             input_version="m1-api-cli-v1",
             result="planned",
             assigned_count=len(plan.assigned_work_item_ids),
@@ -101,6 +107,96 @@ def run_scheduler_cycle_command(
         execute=execute,
     )
     return SchedulerCycleRead.model_validate(result.body)
+
+
+def claim_next_work_item_command(
+    session: Session,
+    *,
+    command: ClaimNextWorkItemCommand,
+    idempotency_key: str,
+) -> ClaimNextWorkItemRead:
+    payload = cast(JsonObject, command.model_dump(mode="json"))
+
+    def execute() -> JsonObject:
+        validate_repository_scope(session, command.repository_id)
+        ensure_scheduler_guard(session, command.queue_key)
+        candidates = load_plan_candidates(session, repository_id=command.repository_id)
+        completed_ids = load_completed_work_item_ids(session)
+        active_conflicts = load_active_conflict_keys(session)
+        plan = plan_scheduler_cycle(
+            SchedulerPlanInput(
+                candidates=candidates,
+                completed_work_item_ids=completed_ids,
+                active_conflict_keys=active_conflicts,
+                capacity=1,
+            )
+        )
+        cycle = SchedulerCycle(
+            queue_key=command.queue_key,
+            repository_id=command.repository_id,
+            input_version="m1-claim-next-v1",
+            result="planned",
+            assigned_count=len(plan.assigned_work_item_ids),
+            rejected_count=len(plan.decisions) - len(plan.assigned_work_item_ids),
+        )
+        session.add(cycle)
+        session.flush()
+        session.add_all(
+            SchedulerDecision(
+                cycle_id=cycle.id,
+                work_item_id=decision.work_item_id,
+                code=decision.code.value,
+                explanation=decision.explanation,
+                blocking_facts=decision.blocking_facts,
+            )
+            for decision in plan.decisions
+        )
+        session.flush()
+        if not plan.assigned_work_item_ids:
+            first_decision = plan.decisions[0] if plan.decisions else None
+            read_model = ClaimNextWorkItemRead(
+                claimed=False,
+                reason=first_decision.code if first_decision is not None else None,
+                explanation=first_decision.explanation
+                if first_decision is not None
+                else "No schedulable work item was found.",
+            )
+            return cast(JsonObject, read_model.model_dump(mode="json"))
+
+        work_item_id = plan.assigned_work_item_ids[0]
+        stored_conflict_keys = frozenset(
+            session.scalars(
+                select(WorkItemConflictKey.conflict_key).where(
+                    WorkItemConflictKey.work_item_id == work_item_id
+                )
+            )
+        )
+        claim = claim_work_item(
+            session,
+            work_item_id=work_item_id,
+            owner=command.owner,
+            conflict_keys=stored_conflict_keys,
+            lease_ttl=timedelta(seconds=command.lease_ttl_seconds),
+        )
+        read_model = ClaimNextWorkItemRead(
+            claimed=claim.claimed,
+            work_item_id=claim.work_item_id,
+            lease_id=claim.lease_id,
+            fencing_token=claim.fencing_token,
+            conflict_keys=claim.conflict_keys,
+            reason=claim.reason,
+            explanation=claim.explanation,
+        )
+        return cast(JsonObject, read_model.model_dump(mode="json"))
+
+    result = run_idempotent_command(
+        session,
+        command_name="queue.claim_next",
+        idempotency_key=idempotency_key,
+        payload=payload,
+        execute=execute,
+    )
+    return ClaimNextWorkItemRead.model_validate(result.body)
 
 
 def claim_work_item_command(
@@ -219,6 +315,7 @@ def scheduler_cycle_to_read(
     return SchedulerCycleRead(
         id=cycle.id,
         queue_key=cycle.queue_key,
+        repository_id=cycle.repository_id,
         result=cycle.result,
         assigned_count=cycle.assigned_count,
         rejected_count=cycle.rejected_count,
@@ -249,18 +346,21 @@ def ensure_scheduler_guard(session: Session, queue_key: str) -> SchedulerGuard:
     return guard
 
 
-def load_plan_candidates(session: Session) -> tuple[WorkItemPlanInput, ...]:
+def load_plan_candidates(
+    session: Session,
+    *,
+    repository_id: str | None = None,
+) -> tuple[WorkItemPlanInput, ...]:
     conflict_keys = conflict_key_map(session)
     dependencies = dependency_map(session)
-    work_items = tuple(
-        session.scalars(
-            select(WorkItem).order_by(
-                WorkItem.priority,
-                WorkItem.created_at,
-                WorkItem.id,
-            )
-        )
+    statement = select(WorkItem).order_by(
+        WorkItem.priority,
+        WorkItem.created_at,
+        WorkItem.id,
     )
+    if repository_id is not None:
+        statement = statement.where(WorkItem.repository_id == repository_id)
+    work_items = tuple(session.scalars(statement))
     return tuple(
         WorkItemPlanInput(
             id=work_item.id,
@@ -300,3 +400,14 @@ def load_active_conflict_keys(session: Session) -> frozenset[str]:
             )
         )
     )
+
+
+def validate_repository_scope(session: Session, repository_id: str | None) -> None:
+    if repository_id is None:
+        return
+    if session.get(Repository, repository_id) is None:
+        raise CommandBlockedError(
+            "repository_not_found",
+            "Repository does not exist.",
+            {"repository_id": repository_id},
+        )

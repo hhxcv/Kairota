@@ -68,9 +68,9 @@ def engine(tmp_path: Path) -> Iterator[Engine]:
         db_engine.dispose()
 
 
-def repository_snapshot() -> GitHubRepositorySnapshot:
+def repository_snapshot(provider_repo_id: str = "repo-1") -> GitHubRepositorySnapshot:
     return GitHubRepositorySnapshot(
-        provider_repo_id="repo-1",
+        provider_repo_id=provider_repo_id,
         name="owner/repo",
         default_branch="main",
     )
@@ -139,13 +139,14 @@ def review(
 
 def sync_snapshot(
     *,
+    provider_repo_id: str = "repo-1",
     issues: tuple[GitHubIssueSnapshot, ...] = (),
     prs: tuple[GitHubPullRequestSnapshot, ...] = (),
     checks: tuple[GitHubCheckSnapshot, ...] = (),
     reviews: tuple[GitHubReviewSnapshot, ...] = (),
 ) -> GitHubSyncSnapshot:
     return GitHubSyncSnapshot(
-        repository=repository_snapshot(),
+        repository=repository_snapshot(provider_repo_id),
         issues=issues,
         pull_requests=prs,
         checks=checks,
@@ -174,6 +175,7 @@ def link_issue_work_item(
 ) -> WorkItem:
     work_item = WorkItem(
         title="Linked work",
+        repository_id=repository.id,
         status=status.value,
         priority=10,
         risk="medium",
@@ -230,6 +232,7 @@ def test_poll_sync_creates_issue_work_item_and_replays_idempotently(
         assert (
             session.scalar(select(WorkItem.status)) == WorkItemStatus.NEEDS_TRIAGE.value
         )
+        assert session.scalar(select(WorkItem.repository_id)) == repository.id
 
 
 def test_issue_close_without_merged_pr_moves_to_human_decision(engine: Engine) -> None:
@@ -322,6 +325,7 @@ def test_requested_changes_and_unresolved_threads_require_strict_ai_review(
             )
             client: GitHubClient = FakeGitHubClient(
                 sync_snapshot(
+                    provider_repo_id=f"repo-review-{index}",
                     prs=(pull_request(),),
                     checks=(check(),),
                     reviews=(
@@ -361,7 +365,12 @@ def test_pull_request_merged_and_closed_unmerged_reducers(engine: Engine) -> Non
                 repository,
                 status=WorkItemStatus.PR_OPEN,
             )
-            client: GitHubClient = FakeGitHubClient(sync_snapshot(prs=(pr_snapshot,)))
+            client: GitHubClient = FakeGitHubClient(
+                sync_snapshot(
+                    provider_repo_id=f"repo-terminal-{index}",
+                    prs=(pr_snapshot,),
+                )
+            )
 
             sync_repository_command(
                 session,

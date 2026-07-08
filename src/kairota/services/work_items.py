@@ -8,11 +8,17 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from kairota.contracts.enums import LeaseStatus, WorkItemStatus
-from kairota.contracts.schemas import QueueSummaryRead, WorkItemCreate, WorkItemRead
+from kairota.contracts.schemas import (
+    QueueSummaryRead,
+    WorkItemCreate,
+    WorkItemRead,
+    WorkItemTriageCommand,
+)
 from kairota.models.records import (
     AuditEvent,
     Lease,
     LockHolder,
+    Repository,
     WorkItem,
     WorkItemConflictKey,
     WorkItemDependency,
@@ -23,6 +29,14 @@ from kairota.services.idempotency import JsonObject, run_idempotent_command
 ALLOWED_CREATE_STATUSES = frozenset(
     {
         WorkItemStatus.NEEDS_TRIAGE.value,
+        WorkItemStatus.BACKLOG.value,
+        WorkItemStatus.READY.value,
+        WorkItemStatus.BLOCKED.value,
+        WorkItemStatus.HUMAN_DECISION.value,
+    }
+)
+ALLOWED_TRIAGE_STATUSES = frozenset(
+    {
         WorkItemStatus.BACKLOG.value,
         WorkItemStatus.READY.value,
         WorkItemStatus.BLOCKED.value,
@@ -44,6 +58,7 @@ def create_work_item_command(
     def execute() -> JsonObject:
         work_item = WorkItem(
             title=command.title,
+            repository_id=command.repository_id,
             status=str(command.status),
             priority=command.priority,
             risk=str(command.risk),
@@ -88,6 +103,7 @@ def list_work_items(
     session: Session,
     *,
     status: WorkItemStatus | None = None,
+    repository_id: str | None = None,
 ) -> tuple[WorkItemRead, ...]:
     statement = select(WorkItem).order_by(
         WorkItem.priority,
@@ -96,6 +112,8 @@ def list_work_items(
     )
     if status is not None:
         statement = statement.where(WorkItem.status == status.value)
+    if repository_id is not None:
+        statement = statement.where(WorkItem.repository_id == repository_id)
     return tuple(
         work_item_to_read(session, item) for item in session.scalars(statement)
     )
@@ -108,18 +126,38 @@ def get_work_item(session: Session, work_item_id: str) -> WorkItemRead | None:
     return work_item_to_read(session, work_item)
 
 
-def queue_summary(session: Session) -> QueueSummaryRead:
+def queue_summary(
+    session: Session,
+    *,
+    repository_id: str | None = None,
+) -> QueueSummaryRead:
     status_counts: Counter[str] = Counter()
-    for status, count in session.execute(
-        select(WorkItem.status, func.count(WorkItem.id)).group_by(WorkItem.status)
-    ):
+    status_statement = select(WorkItem.status, func.count(WorkItem.id)).group_by(
+        WorkItem.status
+    )
+    if repository_id is not None:
+        status_statement = status_statement.where(
+            WorkItem.repository_id == repository_id
+        )
+    for status, count in session.execute(status_statement):
         status_counts[str(status)] = int(count)
-    active_leases = session.scalar(
-        select(func.count(Lease.id)).where(Lease.status == LeaseStatus.ACTIVE.value)
+    active_leases_statement = select(func.count(Lease.id)).where(
+        Lease.status == LeaseStatus.ACTIVE.value
     )
-    active_locks = session.scalar(
-        select(func.count(LockHolder.id)).where(LockHolder.released_at.is_(None))
+    active_locks_statement = select(func.count(LockHolder.id)).where(
+        LockHolder.released_at.is_(None)
     )
+    if repository_id is not None:
+        active_leases_statement = active_leases_statement.join(
+            WorkItem, Lease.work_item_id == WorkItem.id
+        ).where(WorkItem.repository_id == repository_id)
+        active_locks_statement = (
+            active_locks_statement.join(Lease, LockHolder.lease_id == Lease.id)
+            .join(WorkItem, Lease.work_item_id == WorkItem.id)
+            .where(WorkItem.repository_id == repository_id)
+        )
+    active_leases = session.scalar(active_leases_statement)
+    active_locks = session.scalar(active_locks_statement)
     total = sum(status_counts.values())
     return QueueSummaryRead(
         total=total,
@@ -150,6 +188,7 @@ def work_item_to_read(session: Session, work_item: WorkItem) -> WorkItemRead:
     return WorkItemRead(
         id=work_item.id,
         title=work_item.title,
+        repository_id=work_item.repository_id,
         status=WorkItemStatus(work_item.status),
         priority=work_item.priority,
         risk=work_item.risk,
@@ -174,12 +213,122 @@ def validate_create_command(session: Session, command: WorkItemCreate) -> None:
             "Work item create can only use a safe initial status.",
             {"status": status},
         )
-
+    validate_repository_exists(session, command.repository_id)
     requested_dependency_ids = {
         dependency_id.strip()
         for dependency_id in command.dependency_ids
         if dependency_id.strip()
     }
+    validate_dependency_ids(session, requested_dependency_ids)
+
+
+def triage_work_item_command(
+    session: Session,
+    *,
+    work_item_id: str,
+    command: WorkItemTriageCommand,
+    idempotency_key: str,
+    actor: str = "local",
+) -> WorkItemRead:
+    payload: JsonObject = {
+        "work_item_id": work_item_id,
+        **cast(JsonObject, command.model_dump(mode="json")),
+    }
+    validate_triage_command(session, work_item_id, command)
+
+    def execute() -> JsonObject:
+        work_item = session.get(WorkItem, work_item_id)
+        if work_item is None:
+            raise CommandBlockedError(
+                "work_item_not_found",
+                "Work item does not exist.",
+                {"work_item_id": work_item_id},
+            )
+        work_item.status = str(command.status)
+        work_item.priority = command.priority
+        work_item.risk = str(command.risk)
+        work_item.work_type = str(command.work_type)
+        work_item.autonomy_mode = str(command.autonomy_mode)
+        work_item.expected_touch = command.expected_touch
+        work_item.acceptance = command.acceptance
+        work_item.validation = command.validation
+
+        replace_conflict_keys(session, work_item_id, command.conflict_keys)
+        replace_dependencies(session, work_item_id, command.dependency_ids)
+        session.add(
+            AuditEvent(
+                actor=actor,
+                action="triage_work_item",
+                subject_type="work_item",
+                subject_id=work_item.id,
+                summary="Work item scheduling facts were triaged.",
+                details={"status": str(command.status)},
+            )
+        )
+        session.flush()
+        return cast(
+            JsonObject, work_item_to_read(session, work_item).model_dump(mode="json")
+        )
+
+    result = run_idempotent_command(
+        session,
+        command_name="work_item.triage",
+        idempotency_key=idempotency_key,
+        payload=payload,
+        execute=execute,
+    )
+    return WorkItemRead.model_validate(result.body)
+
+
+def validate_triage_command(
+    session: Session,
+    work_item_id: str,
+    command: WorkItemTriageCommand,
+) -> None:
+    work_item = session.get(WorkItem, work_item_id)
+    if work_item is None:
+        raise CommandBlockedError(
+            "work_item_not_found",
+            "Work item does not exist.",
+            {"work_item_id": work_item_id},
+        )
+    status = str(command.status)
+    if status not in ALLOWED_TRIAGE_STATUSES:
+        raise CommandBlockedError(
+            "invalid_triage_status",
+            "Work item triage can only move work to backlog, ready, blocked, "
+            "or human decision.",
+            {"status": status},
+        )
+    requested_dependency_ids = {
+        dependency_id.strip()
+        for dependency_id in command.dependency_ids
+        if dependency_id.strip()
+    }
+    if work_item_id in requested_dependency_ids:
+        raise CommandBlockedError(
+            "self_dependency",
+            "Work item cannot depend on itself.",
+            {"work_item_id": work_item_id},
+        )
+    validate_dependency_ids(session, requested_dependency_ids)
+
+
+def validate_repository_exists(session: Session, repository_id: str | None) -> None:
+    if repository_id is None:
+        return
+    if session.get(Repository, repository_id) is None:
+        raise CommandBlockedError(
+            "repository_not_found",
+            "Repository does not exist.",
+            {"repository_id": repository_id},
+        )
+
+
+def validate_dependency_ids(
+    session: Session,
+    requested_dependency_ids: set[str],
+) -> None:
     if not requested_dependency_ids:
         return
 
@@ -194,7 +343,7 @@ def validate_create_command(session: Session, command: WorkItemCreate) -> None:
     if missing_dependency_ids:
         raise CommandBlockedError(
             "missing_dependency",
-            "Work item create references dependencies that do not exist.",
+            "Work item references dependencies that do not exist.",
             {"dependency_ids": missing_dependency_ids},
         )
 
@@ -232,6 +381,28 @@ def add_dependencies(
         )
         for dependency_id in unique_dependency_ids
     )
+
+
+def replace_conflict_keys(
+    session: Session,
+    work_item_id: str,
+    conflict_keys: Iterable[str],
+) -> None:
+    session.query(WorkItemConflictKey).filter(
+        WorkItemConflictKey.work_item_id == work_item_id
+    ).delete()
+    add_conflict_keys(session, work_item_id, conflict_keys)
+
+
+def replace_dependencies(
+    session: Session,
+    work_item_id: str,
+    dependency_ids: Iterable[str],
+) -> None:
+    session.query(WorkItemDependency).filter(
+        WorkItemDependency.work_item_id == work_item_id
+    ).delete()
+    add_dependencies(session, work_item_id, dependency_ids)
 
 
 def conflict_key_map(session: Session) -> dict[str, frozenset[str]]:

@@ -104,8 +104,12 @@ REASON_AND_ACTION = {
 }
 
 
-def queue_workbench(session: Session) -> QueueWorkbenchRead:
-    work_items = list_work_items(session)
+def queue_workbench(
+    session: Session,
+    *,
+    repository_id: str | None = None,
+) -> QueueWorkbenchRead:
+    work_items = list_work_items(session, repository_id=repository_id)
     runs_by_work_item = latest_worker_runs_by_work_item(session)
     repository_by_work_item = repository_state_by_work_item(session)
     rows = tuple(
@@ -121,7 +125,7 @@ def queue_workbench(session: Session) -> QueueWorkbenchRead:
         rows_by_section[row.section].append(row)
 
     return QueueWorkbenchRead(
-        summary=queue_summary(session),
+        summary=queue_summary(session, repository_id=repository_id),
         sections=tuple(
             QueueWorkbenchSectionRead(
                 id=section_id,
@@ -150,6 +154,7 @@ def work_item_to_row(
     reason_code, next_action = REASON_AND_ACTION[status]
     return QueueWorkbenchRowRead(
         id=work_item.id,
+        repository_id=work_item.repository_id,
         title=work_item.title,
         section=STATUS_SECTION[status],
         status=status,

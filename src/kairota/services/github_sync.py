@@ -225,6 +225,7 @@ def apply_sync_snapshot(
         checks_seen=len(snapshot.checks),
         reviews_seen=len(snapshot.reviews),
     )
+    repository.provider_repo_id = snapshot.repository.provider_repo_id
     repository.name = snapshot.repository.name or repository.name
     repository.default_branch = snapshot.repository.default_branch
 
@@ -294,10 +295,13 @@ def upsert_issue(
         }:
             work_item.title = issue.title
         work_item.source_url = issue.url
+        work_item.repository_id = repository.id
+        external_ref.repository_id = repository.id
         return work_item, False
 
     work_item = WorkItem(
         title=issue.title,
+        repository_id=repository.id,
         status=WorkItemStatus.NEEDS_TRIAGE.value,
         priority=100,
         risk="medium",
@@ -772,6 +776,13 @@ def ensure_repository(
         )
     )
     if repository is None:
+        repository = session.scalar(
+            select(Repository).where(
+                Repository.provider == RepositoryProvider.GITHUB.value,
+                Repository.name == snapshot.name,
+            )
+        )
+    if repository is None:
         repository = Repository(
             provider=RepositoryProvider.GITHUB.value,
             provider_repo_id=snapshot.provider_repo_id,
@@ -789,6 +800,7 @@ def ensure_repository(
                 {"provider_repo_id": snapshot.provider_repo_id},
             ) from exc
     else:
+        repository.provider_repo_id = snapshot.provider_repo_id
         repository.name = snapshot.name
         repository.default_branch = snapshot.default_branch
     return repository

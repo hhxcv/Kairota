@@ -15,7 +15,7 @@ import { fetchQueueWorkbench } from "./api";
 import "./styles.css";
 import {
   allRows,
-  demoWorkbench,
+  emptyWorkbench,
   sectionTones,
   type QueueWorkbench,
   type QueueWorkbenchEvent,
@@ -25,7 +25,7 @@ import {
   type SectionId,
 } from "./workbench";
 
-type DataSource = "api" | "demo";
+type DataSource = "api" | "empty";
 type LoadState = "idle" | "loading" | "ready";
 
 const sectionIcons: Record<SectionId, typeof CircleDot> = {
@@ -40,17 +40,15 @@ const sectionIcons: Record<SectionId, typeof CircleDot> = {
 const allSections = "all";
 
 export function App() {
-  const [workbench, setWorkbench] = useState<QueueWorkbench>(demoWorkbench);
-  const [source, setSource] = useState<DataSource>("demo");
+  const [workbench, setWorkbench] = useState<QueueWorkbench>(emptyWorkbench);
+  const [source, setSource] = useState<DataSource>("empty");
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SectionId | typeof allSections>(
     allSections,
   );
   const [query, setQuery] = useState("");
-  const [selectedRowId, setSelectedRowId] = useState<string>(
-    demoWorkbench.sections[0].rows[0]?.id ?? "",
-  );
+  const [selectedRowId, setSelectedRowId] = useState<string>("");
 
   const loadWorkbench = useCallback(async (signal?: AbortSignal) => {
     setLoadState("loading");
@@ -64,10 +62,10 @@ export function App() {
       if (signal?.aborted) {
         return;
       }
-      setWorkbench(demoWorkbench);
-      setSource("demo");
+      setWorkbench(emptyWorkbench);
+      setSource("empty");
       setLoadError(error instanceof Error ? error.message : "Request failed");
-      setSelectedRowId((current) => current || allRows(demoWorkbench)[0]?.id || "");
+      setSelectedRowId("");
     } finally {
       if (!signal?.aborted) {
         setLoadState("ready");
@@ -123,7 +121,7 @@ export function App() {
           <div>
             <h1>AI Dev Queue</h1>
             <p className="bar-copy">
-              {source === "api" ? "Local API" : "Demo data"} · {rows.length} visible
+              {source === "api" ? "Local API" : "No API data"} - {rows.length} visible
               work items
             </p>
           </div>
@@ -157,7 +155,7 @@ export function App() {
 
         {loadError ? (
           <div className="runtime-note" role="status">
-            API unavailable · {loadError}
+            API unavailable - {loadError}
           </div>
         ) : null}
 
@@ -301,7 +299,7 @@ function WorkRow({
     >
       <span className="work-row__title">{row.title}</span>
       <span className="work-row__meta">
-        P{row.priority} · {row.risk} · {row.work_type}
+        P{row.priority} - {row.risk} - {row.work_type}
       </span>
       <span className="work-row__reason">{row.reason_code}</span>
       <span className="work-row__action">{row.next_action}</span>
@@ -400,14 +398,14 @@ function RepositorySummary({
       />
       <DetailText
         label="Checks"
-        value={`${stringValue(repository.pending_checks, "0")} pending · ${stringValue(
+        value={`${stringValue(repository.pending_checks, "0")} pending - ${stringValue(
           repository.failing_checks,
           "0",
         )} failing`}
       />
       <DetailText
         label="Review"
-        value={`${stringValue(repository.review_state, "unknown")} · ${stringValue(
+        value={`${stringValue(repository.review_state, "unknown")} - ${stringValue(
           repository.unresolved_threads,
           "0",
         )} unresolved`}

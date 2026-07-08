@@ -110,6 +110,18 @@ def create_ready_work_item(client: TestClient, key: str = "create-ready") -> str
     return str(response.json()["id"])
 
 
+def register_repository(client: TestClient, key: str = "register-repo") -> str:
+    response = client.post(
+        "/repositories",
+        headers={"Idempotency-Key": key},
+        json={"remote": "https://github.com/owner/repo.git"},
+    )
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["name"] == "owner/repo"
+    return str(payload["id"])
+
+
 def test_work_item_create_replays_same_idempotent_command(
     client: TestClient,
 ) -> None:
@@ -197,6 +209,84 @@ def test_queue_workbench_endpoint_returns_sections(client: TestClient) -> None:
     assert sections["ready"]["rows"][0]["id"] == work_item_id
     assert sections["ready"]["rows"][0]["reason_code"] == "ready_for_claim"
     assert payload["summary"]["by_status"]["ready"] == 1
+
+
+def test_repository_register_list_and_show(client: TestClient) -> None:
+    repository_id = register_repository(client)
+
+    listed = client.get("/repositories")
+    shown = client.get(f"/repositories/{repository_id}")
+
+    assert listed.status_code == 200
+    assert listed.json()[0]["id"] == repository_id
+    assert shown.status_code == 200
+    assert shown.json()["provider_repo_id"] == "owner/repo"
+
+
+def test_triage_and_claim_next_are_repository_scoped(client: TestClient) -> None:
+    repository_id = register_repository(client)
+    unscoped_work_item_id = create_ready_work_item(client, "unscoped-ready")
+    created = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "repo-needs-triage"},
+        json={"title": "Repo issue", "repository_id": repository_id},
+    )
+    assert created.status_code == 200
+    work_item_id = str(created.json()["id"])
+
+    triaged = client.post(
+        f"/work-items/{work_item_id}/triage",
+        headers={"Idempotency-Key": "repo-triage"},
+        json={
+            "status": "ready",
+            "priority": 1,
+            "risk": "medium",
+            "work_type": "implementation",
+            "autonomy_mode": "ai_assisted",
+            "expected_touch": "src/kairota/api/routes.py",
+            "acceptance": "Repository-scoped claim works.",
+            "validation": "pytest tests/test_api.py",
+            "conflict_keys": ["repo:owner/repo:path:src/kairota/api/routes.py"],
+        },
+    )
+    ready = client.get(f"/queue/ready?repository_id={repository_id}")
+    claim_next = client.post(
+        "/queue/claim-next",
+        headers={"Idempotency-Key": "repo-claim-next"},
+        json={"owner": "repo-worker", "repository_id": repository_id},
+    )
+
+    assert triaged.status_code == 200
+    assert triaged.json()["repository_id"] == repository_id
+    assert ready.status_code == 200
+    assert [item["id"] for item in ready.json()] == [work_item_id]
+    assert claim_next.status_code == 200
+    assert claim_next.json()["claimed"] is True
+    assert claim_next.json()["work_item_id"] == work_item_id
+    unscoped_status = client.get(f"/work-items/{unscoped_work_item_id}").json()[
+        "status"
+    ]
+    assert unscoped_status == "ready"
+
+
+def test_repository_scoped_scheduler_rejects_unknown_repository(
+    client: TestClient,
+) -> None:
+    cycle = client.post(
+        "/scheduler/cycles",
+        headers={"Idempotency-Key": "unknown-repo-cycle"},
+        json={"repository_id": "missing-repository"},
+    )
+    claim_next = client.post(
+        "/queue/claim-next",
+        headers={"Idempotency-Key": "unknown-repo-claim-next"},
+        json={"repository_id": "missing-repository", "owner": "slot-1"},
+    )
+
+    assert cycle.status_code == 409
+    assert cycle.json()["reason_code"] == "repository_not_found"
+    assert claim_next.status_code == 409
+    assert claim_next.json()["reason_code"] == "repository_not_found"
 
 
 def test_scheduler_cycle_records_decisions(client: TestClient) -> None:
@@ -342,6 +432,7 @@ def test_repository_sync_uses_github_adapter(
     assert response.status_code == 200
     assert response.json()["issues_seen"] == 1
     assert response.json()["work_items_created"] == 1
+    assert client.get("/work-items").json()[0]["repository_id"] == repository_id
 
 
 def test_github_webhook_route_verifies_signature(

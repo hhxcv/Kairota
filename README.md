@@ -16,8 +16,9 @@ experience sharing, and consultant-style agents.
 M1 implementation has started. Current runtime code includes a FastAPI health
 endpoint, CLI entry point, Alembic migrations, Vite React frontend shell, core
 database schema, Pydantic contracts, work item state machine, and pure scheduler
-planner. Claim and lease mutation commands, GitHub sync, worker runtime, and
-queue data flows are not implemented yet.
+planner. Claim, lease heartbeat, and stale lease recovery services are being
+implemented. GitHub sync, worker runtime, product API, and queue data flows are
+not implemented yet.
 
 ## Current Commands
 

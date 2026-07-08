@@ -109,12 +109,42 @@ class QueueWorkbenchEventRead(ContractModel):
     details: JsonObject = Field(default_factory=dict)
 
 
+class QueueWorkbenchRecoverySignalRead(ContractModel):
+    id: str
+    title: str
+    severity: str
+    count: int
+    action: str
+    details: JsonObject = Field(default_factory=dict)
+
+
 class QueueWorkbenchRead(ContractModel):
     summary: QueueSummaryRead
     sections: tuple[QueueWorkbenchSectionRead, ...]
     decision_inbox: tuple[QueueWorkbenchRowRead, ...] = Field(default_factory=tuple)
     recent_events: tuple[QueueWorkbenchEventRead, ...] = Field(default_factory=tuple)
     failures: tuple[QueueWorkbenchEventRead, ...] = Field(default_factory=tuple)
+    recovery_signals: tuple[QueueWorkbenchRecoverySignalRead, ...] = Field(
+        default_factory=tuple
+    )
+
+
+class DemoSeedRead(ContractModel):
+    status: str
+    work_item_ids: tuple[str, ...] = Field(default_factory=tuple)
+    repository_ids: tuple[str, ...] = Field(default_factory=tuple)
+    seeded_records: int
+
+
+class SmokeCheckRead(ContractModel):
+    name: str
+    status: str
+    details: JsonObject = Field(default_factory=dict)
+
+
+class M1ExitSmokeRead(ContractModel):
+    status: str
+    checks: tuple[SmokeCheckRead, ...]
 
 
 class SchedulerDecisionRead(ContractModel):

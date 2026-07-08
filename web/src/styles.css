@@ -572,29 +572,41 @@ p {
   font-size: 0.75rem;
 }
 
-.event-list {
+.event-list,
+.signal-list {
   display: grid;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.event-list li {
+.event-list li,
+.signal-list li {
   display: grid;
   gap: 4px;
   padding: 10px 12px;
   border-bottom: 1px solid #eef2f3;
 }
 
-.event-list strong {
+.event-list strong,
+.signal-list strong {
   overflow-wrap: anywhere;
   font-size: 0.83rem;
   line-height: 1.3;
 }
 
-.event-list span {
+.event-list span,
+.signal-list span {
   color: #65717a;
   font-size: 0.75rem;
+}
+
+.signal-row--warning {
+  box-shadow: inset 3px 0 0 #a46b19;
+}
+
+.signal-row--critical {
+  box-shadow: inset 3px 0 0 #a64242;
 }
 
 @media (max-width: 1180px) {

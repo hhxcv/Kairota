@@ -10,11 +10,8 @@ doc:
 
 # M1 AI Dev Queue Detailed Design
 
-Status: mixed current and planned. M1.0 runtime foundation, M1.1 core schema
-and contracts, M1.2 state machine and pure scheduler planner, M1.3 claim and
-lease services, M1.4 REST API and CLI boundaries, M1.5 GitHub sync adapter
-boundaries, M1.6 worker run lifecycle commands, and M1.7 queue workbench UI are
-implemented. MCP and M1 exit hardening are not implemented yet.
+Status: current. M1.0 through M1.8 are implemented. MCP remains planned outside
+the M1 exit scope.
 
 ## Purpose
 
@@ -43,8 +40,10 @@ provider-neutral contracts.
   running, blocked, waiting, failed, and done sections, decision inbox, recent
   events, failed sync signals, work item detail, worker-run summary, and
   repository gate summary.
-- There is no MCP server yet.
-- Existing M1 capability expectations are defined in `MILESTONES.md`.
+- M1.8 adds queue recovery signals, deterministic demo seed data, M1 exit smoke
+  checks, documented local validation commands, and an acceptance checklist.
+- There is no MCP server yet; it remains planned outside the M1 exit scope.
+- M1 capability expectations are defined in `MILESTONES.md`.
 
 ## M1 Outcomes
 
@@ -491,6 +490,8 @@ Primary regions:
 - Blocked work with reason codes.
 - Waiting repository checks or review.
 - Human or delegated AI decision inbox.
+- Recovery signals for stale leases, failed sync, stale repository gates, and
+  worker-run authority gaps.
 - Recent events and failures.
 
 Required row details:
@@ -660,6 +661,8 @@ Validate:
 - responsive checks for dense operational layout.
 
 ### M1.8 Hardening And M1 Exit
+
+Status: implemented.
 
 Deliver:
 

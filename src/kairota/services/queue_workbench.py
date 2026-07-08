@@ -1,20 +1,24 @@
 from __future__ import annotations
 
 from collections import defaultdict
+from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import Select, func, or_, select
 from sqlalchemy.orm import Session
 
 from kairota.contracts.enums import (
     CheckConclusion,
     CheckStatus,
     EventStatus,
+    LeaseStatus,
     ReviewGateState,
+    WorkerRunStatus,
     WorkItemStatus,
 )
 from kairota.contracts.schemas import (
     QueueWorkbenchEventRead,
     QueueWorkbenchRead,
+    QueueWorkbenchRecoverySignalRead,
     QueueWorkbenchRowRead,
     QueueWorkbenchRunRead,
     QueueWorkbenchSectionRead,
@@ -23,6 +27,7 @@ from kairota.contracts.schemas import (
 from kairota.models.records import (
     AuditEvent,
     InboundEvent,
+    Lease,
     RepoCheckSummary,
     RepoPullRequest,
     RepoReviewSummary,
@@ -131,6 +136,7 @@ def queue_workbench(session: Session) -> QueueWorkbenchRead:
         ),
         recent_events=recent_audit_events(session),
         failures=recent_failures(session),
+        recovery_signals=recovery_signals(session),
     )
 
 
@@ -343,3 +349,105 @@ def recent_failures(
             reverse=True,
         )[:limit]
     )
+
+
+def recovery_signals(session: Session) -> tuple[QueueWorkbenchRecoverySignalRead, ...]:
+    now = datetime.now(UTC)
+    stale_active_leases = count_rows(
+        session,
+        select(func.count(Lease.id)).where(
+            Lease.status == LeaseStatus.ACTIVE.value,
+            Lease.expires_at < now,
+        ),
+    )
+    failed_inbound_events = count_rows(
+        session,
+        select(func.count(InboundEvent.id)).where(
+            InboundEvent.status == EventStatus.FAILED.value
+        ),
+    )
+    failed_sync_cursors = count_rows(
+        session,
+        select(func.count(SyncCursor.id)).where(
+            SyncCursor.last_failure_at.is_not(None)
+        ),
+    )
+    stale_repository_gates = sum(
+        (
+            count_rows(
+                session,
+                select(func.count(RepoPullRequest.id)).where(
+                    RepoPullRequest.stale.is_(True)
+                ),
+            ),
+            count_rows(
+                session,
+                select(func.count(RepoCheckSummary.id)).where(
+                    RepoCheckSummary.stale.is_(True)
+                ),
+            ),
+            count_rows(
+                session,
+                select(func.count(RepoReviewSummary.id)).where(
+                    RepoReviewSummary.stale.is_(True)
+                ),
+            ),
+        )
+    )
+    open_runs_without_active_lease = count_rows(
+        session,
+        select(func.count(WorkerRun.id))
+        .outerjoin(Lease, WorkerRun.lease_id == Lease.id)
+        .where(
+            WorkerRun.status != WorkerRunStatus.CLOSED.value,
+            or_(
+                WorkerRun.lease_id.is_(None),
+                Lease.status.is_(None),
+                Lease.status != LeaseStatus.ACTIVE.value,
+            ),
+        ),
+    )
+
+    signals = (
+        QueueWorkbenchRecoverySignalRead(
+            id="stale_active_leases",
+            title="Stale active leases",
+            severity="warning" if stale_active_leases else "ok",
+            count=stale_active_leases,
+            action="Run lease reconciliation",
+            details={"command": "kairota reconcile leases"},
+        ),
+        QueueWorkbenchRecoverySignalRead(
+            id="failed_inbound_events",
+            title="Failed inbound events",
+            severity="warning" if failed_inbound_events else "ok",
+            count=failed_inbound_events,
+            action="Inspect failed webhook or poll events",
+        ),
+        QueueWorkbenchRecoverySignalRead(
+            id="failed_sync_cursors",
+            title="Failed sync cursors",
+            severity="warning" if failed_sync_cursors else "ok",
+            count=failed_sync_cursors,
+            action="Repair adapter configuration and resync",
+        ),
+        QueueWorkbenchRecoverySignalRead(
+            id="stale_repository_gates",
+            title="Stale repository gates",
+            severity="warning" if stale_repository_gates else "ok",
+            count=stale_repository_gates,
+            action="Refresh repository summaries",
+        ),
+        QueueWorkbenchRecoverySignalRead(
+            id="open_runs_without_active_lease",
+            title="Open runs without active lease",
+            severity="critical" if open_runs_without_active_lease else "ok",
+            count=open_runs_without_active_lease,
+            action="Close, supersede, or reconcile worker runs",
+        ),
+    )
+    return tuple(signal for signal in signals if signal.count > 0)
+
+
+def count_rows(session: Session, statement: Select[tuple[int]]) -> int:
+    return int(session.scalar(statement) or 0)

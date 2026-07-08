@@ -10,8 +10,9 @@ doc:
 
 # Product UI
 
-Status: mixed current and planned. The M1 queue workbench is implemented.
-Cost, project management, and cross-project experience surfaces are planned.
+Status: mixed current and planned. The M1 queue workbench with recovery signals
+is implemented. Cost, project management, and cross-project experience surfaces
+are planned.
 
 ## Implemented First Screen
 
@@ -24,6 +25,7 @@ Primary regions:
 - Blocked work.
 - Waiting repository checks or review.
 - Human or delegated AI decision inbox.
+- Recovery signals.
 - Recent events and failures.
 - Selected work item detail with scheduling facts, worker-run state, and
   repository gate summary when present.

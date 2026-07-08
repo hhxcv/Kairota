@@ -14,8 +14,8 @@ doc:
 
 M1 runtime foundation, core schema/contracts, state machine, pure scheduler
 planner, claim and lease services, REST/CLI surfaces, GitHub sync, worker run
-lifecycle commands, and queue workbench UI are implemented. MCP and M1 exit
-hardening are not implemented yet.
+lifecycle commands, queue workbench UI, demo seed data, recovery signals, and
+M1 exit smoke checks are implemented. MCP is not implemented yet.
 
 ## Checks
 
@@ -41,6 +41,14 @@ database requires `KAIROTA_DATABASE_URL`.
 Browser smoke checks cover the queue workbench layout at desktop and mobile
 viewports before PR merge.
 
+M1 exit smoke:
+
+```bash
+kairota demo seed
+kairota queue workbench
+kairota smoke m1-exit
+```
+
 ## Skill Validation
 
 When creating or editing a skill, run the system skill validator if available:
@@ -54,5 +62,4 @@ machine-specific paths into public docs.
 
 ## Future Checks
 
-Add M1 exit smoke checks for create or sync, schedule, claim, run reporting,
-reconciliation, and UI visibility when hardening lands.
+Add M2 cost and flow checks when cost event ingestion and reporting surfaces land.

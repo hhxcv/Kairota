@@ -26,3 +26,4 @@ fact source.
 | Design integration APIs | api, mcp, webhook, adapter | `docs/interfaces/control-api.md` | UI details |
 | Check privacy and public text rules | privacy, secrets, local-info | `docs/governance/privacy.md` | Product contracts |
 | Choose validation for current repo state | validation, checks, baseline | `docs/validation/baseline.md` | Product roadmap |
+| Verify M1 exit acceptance | m1, exit, acceptance, smoke | `docs/validation/m1-exit-checklist.md` | Product roadmap |

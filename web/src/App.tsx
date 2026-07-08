@@ -19,6 +19,7 @@ import {
   sectionTones,
   type QueueWorkbench,
   type QueueWorkbenchEvent,
+  type QueueWorkbenchRecoverySignal,
   type QueueWorkbenchRow,
   type QueueWorkbenchSection,
   type SectionId,
@@ -179,6 +180,7 @@ export function App() {
               rows={workbench.decision_inbox}
               selectedRowId={selectedRow?.id ?? ""}
             />
+            <RecoverySignals signals={workbench.recovery_signals} />
             <EventFeed events={workbench.failures} title="Failures" />
             <EventFeed events={workbench.recent_events} title="Recent Events" />
           </aside>
@@ -445,6 +447,35 @@ function DecisionInbox({
         ))
       ) : (
         <p className="empty-state">No decisions</p>
+      )}
+    </section>
+  );
+}
+
+function RecoverySignals({
+  signals,
+}: {
+  signals: QueueWorkbenchRecoverySignal[];
+}) {
+  return (
+    <section className="side-panel" aria-labelledby="recovery-signals-heading">
+      <header>
+        <h2 id="recovery-signals-heading">Recovery Signals</h2>
+        <span>{signals.length}</span>
+      </header>
+      {signals.length > 0 ? (
+        <ol className="signal-list">
+          {signals.map((signal) => (
+            <li className={`signal-row signal-row--${signal.severity}`} key={signal.id}>
+              <strong>{signal.title}</strong>
+              <span>
+                {signal.count} · {signal.action}
+              </span>
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="empty-state">No recovery signals</p>
       )}
     </section>
   );

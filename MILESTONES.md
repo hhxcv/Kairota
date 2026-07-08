@@ -19,14 +19,12 @@ Out of scope:
 - Product backend, frontend, scheduler, database schema, worker runtime, or API implementation.
 - Public release packaging.
 
-## Active: M1 AI Dev Queue MVP
+## Completed: M1 AI Dev Queue MVP
 
-Status: current.
+Status: completed.
 
 Goal: replace GitHub Project for AI development scheduling while keeping the
 core model repository-provider neutral.
-
-Current slice: M1.8 Hardening And M1 Exit.
 
 Expected capabilities:
 
@@ -36,7 +34,9 @@ Expected capabilities:
 - Repository PR, CI, and review summary sync, with GitHub as the first adapter.
 - UI for ready, blocked, running, waiting, failed, and done work.
 
-## Planned: M2 Cost And Flow Observability
+## Active: M2 Cost And Flow Observability
+
+Status: current.
 
 Goal: measure and improve AI development cost and throughput.
 

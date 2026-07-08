@@ -12,9 +12,9 @@ doc:
 
 Status: mixed current and planned. M1.0 runtime foundation, M1.1 core schema
 and contracts, M1.2 state machine and pure scheduler planner, M1.3 claim and
-lease services, and M1.4 REST API and CLI boundaries are implemented. GitHub
-sync, worker runtime commands, MCP, webhook receiver, and queue workbench UI are
-not implemented yet.
+lease services, M1.4 REST API and CLI boundaries, and M1.5 GitHub sync adapter
+boundaries are implemented. Worker runtime commands, MCP, and queue workbench UI
+are not implemented yet.
 
 ## Purpose
 
@@ -34,10 +34,10 @@ provider-neutral contracts.
 - REST and CLI surfaces are implemented for M1.4 work item create/read, queue
   summary, scheduler cycle recording, claim, heartbeat, and stale lease
   reconciliation.
-- Repository sync currently exposes explicit `not_implemented_yet` stubs until
-  the M1.5 GitHub adapter slice.
-- There are no worker runtime commands, MCP server, webhook receiver, GitHub
-  adapter implementation, or queue workbench UI yet.
+- GitHub sync is implemented for M1.5 through shared polling and webhook
+  normalizers, inbound event idempotency, repository summary persistence, stale
+  gate marking, and reducer audit events.
+- There are no worker runtime commands, MCP server, or queue workbench UI yet.
 - Existing M1 capability expectations are defined in `MILESTONES.md`.
 
 ## M1 Outcomes

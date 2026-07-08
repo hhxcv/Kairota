@@ -139,9 +139,20 @@ def test_cli_smoke_for_m1_api_wrappers(
     reconcile = read_json(capsys)
     assert reconcile["expired_lease_ids"] == []
 
-    assert main(["sync", "repository", "repo-1"]) == 2
+    assert (
+        main(
+            [
+                "sync",
+                "repository",
+                "repo-1",
+                "--idempotency-key",
+                "cli-sync-missing",
+            ]
+        )
+        == 2
+    )
     sync = read_json(capsys)
-    assert sync["reason_code"] == "not_implemented_yet"
+    assert sync["reason_code"] == "repository_not_found"
 
 
 def test_cli_reports_claim_blocked(

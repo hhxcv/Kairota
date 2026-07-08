@@ -157,6 +157,21 @@ class RepositoryRead(ContractModel):
     sync_status: str
 
 
+class RepositorySyncRead(ContractModel):
+    repository_id: str
+    provider: RepositoryProvider
+    status: str
+    replayed: bool = False
+    issues_seen: int = 0
+    pull_requests_seen: int = 0
+    checks_seen: int = 0
+    reviews_seen: int = 0
+    work_items_created: int = 0
+    transitions_applied: int = 0
+    stale_summaries_marked: int = 0
+    inbound_event_id: str | None = None
+
+
 class PullRequestSummaryRead(ContractModel):
     id: str
     repository_id: str

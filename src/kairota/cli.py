@@ -9,6 +9,7 @@ from alembic.config import Config
 from sqlalchemy.orm import Session
 
 from kairota import __version__
+from kairota.adapters.github.client import GitHubHttpClient
 from kairota.config import get_settings
 from kairota.contracts.enums import (
     AutonomyMode,
@@ -24,6 +25,7 @@ from kairota.contracts.schemas import (
 )
 from kairota.db import create_session_factory
 from kairota.services.errors import CommandBlockedError
+from kairota.services.github_sync import sync_repository_command
 from kairota.services.idempotency import IdempotencyConflictError
 from kairota.services.scheduler_cycles import (
     claim_work_item_command,
@@ -89,6 +91,9 @@ def cmd_work_items_create(args: argparse.Namespace) -> int:
             )
     except IdempotencyConflictError as exc:
         print_blocked("idempotency_conflict", str(exc))
+        return 2
+    except CommandBlockedError as exc:
+        print_blocked(exc.reason_code, exc.explanation, exc.details)
         return 2
     print_json(result.model_dump(mode="json"))
     return 0
@@ -210,12 +215,24 @@ def cmd_reconcile_leases(args: argparse.Namespace) -> int:
 
 
 def cmd_sync_repository(args: argparse.Namespace) -> int:
-    print_blocked(
-        "not_implemented_yet",
-        "Repository sync is planned for M1.5 and is not implemented yet.",
-        {"repository_id": args.repository_id},
-    )
-    return 2
+    settings = get_settings()
+    client = GitHubHttpClient.from_settings(settings)
+    try:
+        with session_scope() as session, session.begin():
+            result = sync_repository_command(
+                session,
+                repository_id=args.repository_id,
+                idempotency_key=args.idempotency_key,
+                client=client,
+            )
+    except IdempotencyConflictError as exc:
+        print_blocked("idempotency_conflict", str(exc))
+        return 2
+    except CommandBlockedError as exc:
+        print_blocked(exc.reason_code, exc.explanation, exc.details)
+        return 2
+    print_json(result.model_dump(mode="json"))
+    return 0
 
 
 def session_scope() -> Session:
@@ -359,6 +376,7 @@ def build_parser() -> argparse.ArgumentParser:
         "repository", help="Sync one repository."
     )
     sync_repository.add_argument("repository_id")
+    sync_repository.add_argument("--idempotency-key", required=True)
     sync_repository.set_defaults(func=cmd_sync_repository)
 
     return parser

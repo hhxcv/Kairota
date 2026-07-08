@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
-from kairota.api.deps import get_session
+from kairota.adapters.github.models import GitHubClient
+from kairota.adapters.github.webhook import (
+    WebhookNormalizationError,
+    normalize_webhook_event,
+    verify_signature,
+)
+from kairota.api.deps import get_github_client, get_session
 from kairota.contracts.enums import WorkItemStatus
 from kairota.contracts.schemas import (
     BlockedCommandResponse,
@@ -16,12 +22,17 @@ from kairota.contracts.schemas import (
     LeaseHeartbeatCommand,
     LeaseHeartbeatRead,
     QueueSummaryRead,
+    RepositorySyncRead,
     SchedulerCycleCreate,
     SchedulerCycleRead,
     WorkItemCreate,
     WorkItemRead,
 )
 from kairota.services.errors import CommandBlockedError
+from kairota.services.github_sync import (
+    process_github_webhook_event,
+    sync_repository_command,
+)
 from kairota.services.idempotency import IdempotencyConflictError
 from kairota.services.scheduler_cycles import (
     claim_work_item_command,
@@ -40,6 +51,7 @@ router = APIRouter()
 
 IdempotencyHeader = Annotated[str | None, Header(alias="Idempotency-Key")]
 SessionDependency = Annotated[Session, Depends(get_session)]
+GitHubClientDependency = Annotated[GitHubClient, Depends(get_github_client)]
 
 
 @router.get("/work-items", response_model=tuple[WorkItemRead, ...])
@@ -207,14 +219,71 @@ def api_expire_stale_leases(
         return blocked_response(409, "idempotency_conflict", str(exc))
 
 
-@router.post("/repositories/{repository_id}/sync")
-def api_sync_repository(repository_id: str) -> JSONResponse:
-    return blocked_response(
-        501,
-        "not_implemented_yet",
-        "Repository sync is planned for M1.5 and is not implemented yet.",
-        {"repository_id": repository_id},
-    )
+@router.post("/repositories/{repository_id}/sync", response_model=RepositorySyncRead)
+def api_sync_repository(
+    repository_id: str,
+    session: SessionDependency,
+    github_client: GitHubClientDependency,
+    idempotency_key: IdempotencyHeader = None,
+) -> RepositorySyncRead | JSONResponse:
+    if not idempotency_key:
+        return blocked_response(
+            400,
+            "missing_idempotency_key",
+            "POST /repositories/{id}/sync requires an Idempotency-Key header.",
+        )
+    try:
+        with session.begin():
+            return sync_repository_command(
+                session,
+                repository_id=repository_id,
+                idempotency_key=idempotency_key,
+                client=github_client,
+            )
+    except IdempotencyConflictError as exc:
+        return blocked_response(409, "idempotency_conflict", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
+
+
+@router.post("/webhooks/github", response_model=RepositorySyncRead)
+async def api_github_webhook(
+    request: Request,
+    session: SessionDependency,
+    event_type: Annotated[str | None, Header(alias="X-GitHub-Event")] = None,
+    delivery_id: Annotated[str | None, Header(alias="X-GitHub-Delivery")] = None,
+    signature: Annotated[str | None, Header(alias="X-Hub-Signature-256")] = None,
+) -> RepositorySyncRead | JSONResponse:
+    payload = await request.body()
+    settings = request.app.state.settings
+    if not event_type or not delivery_id:
+        return blocked_response(
+            400,
+            "missing_github_headers",
+            "GitHub webhook event and delivery headers are required.",
+        )
+    if settings.github_webhook_secret and not verify_signature(
+        secret=settings.github_webhook_secret,
+        payload=payload,
+        signature_header=signature,
+    ):
+        return blocked_response(
+            401,
+            "invalid_github_signature",
+            "GitHub webhook signature verification failed.",
+        )
+    try:
+        event = normalize_webhook_event(
+            event_type=event_type,
+            delivery_id=delivery_id,
+            payload=payload,
+        )
+        with session.begin():
+            return process_github_webhook_event(session, event=event)
+    except WebhookNormalizationError as exc:
+        return blocked_response(400, "webhook_normalization_failed", str(exc))
+    except CommandBlockedError as exc:
+        return blocked_response(409, exc.reason_code, exc.explanation, exc.details)
 
 
 def blocked_response(

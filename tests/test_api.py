@@ -1,3 +1,6 @@
+import hashlib
+import hmac
+import json
 from collections.abc import Iterator
 from pathlib import Path
 
@@ -8,8 +11,41 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
+from kairota.adapters.github.models import (
+    GitHubIssueSnapshot,
+    GitHubRepositoryConfig,
+    GitHubRepositorySnapshot,
+    GitHubSyncSnapshot,
+)
 from kairota.api.app import create_app
 from kairota.config import Settings
+from kairota.contracts.enums import RepositoryProvider
+from kairota.models.records import Repository
+
+
+class FakeGitHubClient:
+    def fetch_repository_snapshot(
+        self,
+        repository: GitHubRepositoryConfig,
+        cursor: str | None = None,
+    ) -> GitHubSyncSnapshot:
+        del repository, cursor
+        return GitHubSyncSnapshot(
+            repository=GitHubRepositorySnapshot(
+                provider_repo_id="repo-1",
+                name="owner/repo",
+                default_branch="main",
+            ),
+            issues=(
+                GitHubIssueSnapshot(
+                    number=7,
+                    provider_issue_id="issue-7",
+                    title="Synced issue",
+                    url="https://example.test/issues/7",
+                    state="open",
+                ),
+            ),
+        )
 
 
 def test_healthz_returns_runtime_identity() -> None:
@@ -44,6 +80,7 @@ def client(session_factory: sessionmaker[Session]) -> TestClient:
     app = create_app(
         Settings(app_name="Kairota Test", database_url="sqlite:///test.sqlite"),
         session_factory=session_factory,
+        github_client=FakeGitHubClient(),
     )
     return TestClient(app)
 
@@ -198,8 +235,85 @@ def test_claim_and_heartbeat_success(client: TestClient) -> None:
     assert heartbeat.json()["refreshed"] is True
 
 
-def test_repository_sync_reports_planned_adapter(client: TestClient) -> None:
-    response = client.post("/repositories/repo-1/sync")
+def test_repository_sync_uses_github_adapter(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    with session_factory() as session, session.begin():
+        repository = Repository(
+            provider=RepositoryProvider.GITHUB.value,
+            provider_repo_id="repo-1",
+            name="owner/repo",
+            default_branch="main",
+            sync_status="unknown",
+        )
+        session.add(repository)
+        session.flush()
+        repository_id = repository.id
 
-    assert response.status_code == 501
-    assert response.json()["reason_code"] == "not_implemented_yet"
+    response = client.post(
+        f"/repositories/{repository_id}/sync",
+        headers={"Idempotency-Key": "api-sync"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["issues_seen"] == 1
+    assert response.json()["work_items_created"] == 1
+
+
+def test_github_webhook_route_verifies_signature(
+    session_factory: sessionmaker[Session],
+) -> None:
+    app = create_app(
+        Settings(
+            app_name="Kairota Test",
+            database_url="sqlite:///test.sqlite",
+            github_webhook_secret="secret",
+        ),
+        session_factory=session_factory,
+        github_client=FakeGitHubClient(),
+    )
+    client = TestClient(app)
+    payload = json.dumps(
+        {
+            "action": "opened",
+            "repository": {
+                "id": 123,
+                "full_name": "owner/repo",
+                "default_branch": "main",
+            },
+            "issue": {
+                "id": 456,
+                "number": 7,
+                "title": "Webhook issue",
+                "html_url": "https://example.test/issues/7",
+                "state": "open",
+            },
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+    signature = hmac.new(b"secret", payload, hashlib.sha256).hexdigest()
+
+    invalid = client.post(
+        "/webhooks/github",
+        content=payload,
+        headers={
+            "X-GitHub-Event": "issues",
+            "X-GitHub-Delivery": "delivery-invalid",
+            "X-Hub-Signature-256": "sha256=wrong",
+        },
+    )
+    valid = client.post(
+        "/webhooks/github",
+        content=payload,
+        headers={
+            "X-GitHub-Event": "issues",
+            "X-GitHub-Delivery": "delivery-valid",
+            "X-Hub-Signature-256": f"sha256={signature}",
+        },
+    )
+
+    assert invalid.status_code == 401
+    assert invalid.json()["reason_code"] == "invalid_github_signature"
+    assert valid.status_code == 200
+    assert valid.json()["work_items_created"] == 1

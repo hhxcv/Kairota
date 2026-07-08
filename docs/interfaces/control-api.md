@@ -11,9 +11,9 @@ doc:
 # Control API
 
 Status: mixed current and planned. Health, work item, queue summary, scheduler
-cycle, claim, lease heartbeat, and stale lease reconciliation endpoints are
-implemented for M1.4. Repository sync, webhooks, MCP, worker-run commands, and
-adapter-backed mutations are not implemented yet.
+cycle, claim, lease heartbeat, stale lease reconciliation, GitHub repository
+sync, and GitHub webhook endpoints are implemented through M1.5. MCP,
+worker-run commands, and adapter-backed public mutations are not implemented yet.
 
 ## Planned Interfaces
 
@@ -46,7 +46,8 @@ adapter-backed mutations are not implemented yet.
 | `POST` | `/work-items/{id}/claim` | implemented; requires `Idempotency-Key` |
 | `POST` | `/leases/{id}/heartbeat` | implemented; requires `Idempotency-Key` |
 | `POST` | `/reconcile/leases/expire` | implemented; requires `Idempotency-Key` |
-| `POST` | `/repositories/{id}/sync` | stub; returns `not_implemented_yet` until M1.5 |
+| `POST` | `/repositories/{id}/sync` | implemented; requires `Idempotency-Key` |
+| `POST` | `/webhooks/github` | implemented; verifies `X-Hub-Signature-256` when configured |
 
 Implemented command endpoints record command idempotency in
 `command_requests`. Reusing the same key and payload returns the original
@@ -64,7 +65,7 @@ result; reusing the same key with a different payload returns
 | `scheduler run` | implemented |
 | `leases heartbeat` | implemented |
 | `reconcile leases` | implemented |
-| `sync repository` | stub; returns `not_implemented_yet` until M1.5 |
+| `sync repository` | implemented; requires `--idempotency-key` |
 
 ## Planned Adapter Set
 

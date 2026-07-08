@@ -15,6 +15,9 @@ class Settings(BaseSettings):
 
     app_name: str = "Kairota"
     database_url: str | None = Field(default=None, repr=False)
+    github_token: str | None = Field(default=None, repr=False)
+    github_api_url: str = "https://api.github.com"
+    github_webhook_secret: str | None = Field(default=None, repr=False)
 
 
 @lru_cache

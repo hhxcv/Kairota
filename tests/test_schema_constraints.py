@@ -132,6 +132,63 @@ def test_one_active_lock_holder_per_conflict_key(migrated_engine: Engine) -> Non
         )
 
 
+def test_one_open_worker_run_per_lease(migrated_engine: Engine) -> None:
+    insert_work_item(migrated_engine, "wi-1")
+
+    with migrated_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                insert into leases
+                    (id, work_item_id, owner, status, fencing_token, expires_at)
+                values
+                    ('lease-1', 'wi-1', 'slot-1', 'active', 'token-1',
+                     '2026-01-01T00:00:00Z')
+                """
+            )
+        )
+        connection.execute(
+            text(
+                """
+                insert into worker_runs
+                    (id, work_item_id, lease_id, role, status, validation,
+                     public_mutations, cost_summary)
+                values
+                    ('run-1', 'wi-1', 'lease-1', 'worker', 'running',
+                     '{}', '{}', '{}')
+                """
+            )
+        )
+
+    with pytest.raises(IntegrityError), migrated_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                insert into worker_runs
+                    (id, work_item_id, lease_id, role, status, validation,
+                     public_mutations, cost_summary)
+                values
+                    ('run-2', 'wi-1', 'lease-1', 'worker', 'reporting',
+                     '{}', '{}', '{}')
+                """
+            )
+        )
+
+    with migrated_engine.begin() as connection:
+        connection.execute(
+            text(
+                """
+                insert into worker_runs
+                    (id, work_item_id, lease_id, role, status, validation,
+                     public_mutations, cost_summary)
+                values
+                    ('run-3', 'wi-1', 'lease-1', 'worker', 'closed',
+                     '{}', '{}', '{}')
+                """
+            )
+        )
+
+
 def test_inbound_events_are_idempotent_per_provider(migrated_engine: Engine) -> None:
     with migrated_engine.begin() as connection:
         connection.execute(

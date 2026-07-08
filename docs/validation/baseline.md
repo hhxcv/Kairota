@@ -12,10 +12,10 @@ doc:
 
 ## Current Repo State
 
-M1 runtime foundation, core schema/contracts, state machine, and pure scheduler
-planner are implemented. Claim, lease heartbeat, and stale lease recovery
-services are being implemented. GitHub sync, worker runtime, product API, and
-queue data flows are not implemented yet.
+M1 runtime foundation, core schema/contracts, state machine, pure scheduler
+planner, claim and lease services, REST/CLI surfaces, GitHub sync, and worker
+run lifecycle commands are implemented. MCP and queue workbench UI are not
+implemented yet.
 
 ## Checks
 

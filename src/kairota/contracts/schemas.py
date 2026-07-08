@@ -142,10 +142,38 @@ class LockHolderRead(ContractModel):
 class WorkerRunRead(ContractModel):
     id: str
     work_item_id: str
+    lease_id: str | None = None
     role: WorkerRole
     status: WorkerRunStatus
     result: WorkerRunResult | None = None
     validation: JsonObject = Field(default_factory=dict)
+    public_mutations: JsonObject = Field(default_factory=dict)
+    cost_summary: JsonObject = Field(default_factory=dict)
+    started_at: datetime | None = None
+    heartbeat_at: datetime | None = None
+    closed_at: datetime | None = None
+
+
+class WorkerRunCreateCommand(ContractModel):
+    work_item_id: str
+    lease_id: str
+    fencing_token: str = Field(min_length=1, max_length=120)
+    role: WorkerRole = WorkerRole.WORKER
+
+
+class WorkerRunHeartbeatCommand(ContractModel):
+    fencing_token: str = Field(min_length=1, max_length=120)
+
+
+class WorkerRunReportCommand(ContractModel):
+    fencing_token: str = Field(min_length=1, max_length=120)
+    validation: JsonObject = Field(default_factory=dict)
+    public_mutations: JsonObject = Field(default_factory=dict)
+    cost_summary: JsonObject = Field(default_factory=dict)
+
+
+class WorkerRunCloseCommand(WorkerRunReportCommand):
+    result: WorkerRunResult
 
 
 class RepositoryRead(ContractModel):

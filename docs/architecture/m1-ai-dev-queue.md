@@ -13,8 +13,8 @@ doc:
 Status: mixed current and planned. M1.0 runtime foundation, M1.1 core schema
 and contracts, M1.2 state machine and pure scheduler planner, M1.3 claim and
 lease services, M1.4 REST API and CLI boundaries, and M1.5 GitHub sync adapter
-boundaries are implemented. Worker runtime commands, MCP, and queue workbench UI
-are not implemented yet.
+boundaries, and M1.6 worker run lifecycle commands are implemented. MCP and
+queue workbench UI are not implemented yet.
 
 ## Purpose
 
@@ -37,7 +37,9 @@ provider-neutral contracts.
 - GitHub sync is implemented for M1.5 through shared polling and webhook
   normalizers, inbound event idempotency, repository summary persistence, stale
   gate marking, and reducer audit events.
-- There are no worker runtime commands, MCP server, or queue workbench UI yet.
+- Worker run creation, heartbeat, reporting, close, validation evidence, and
+  lease/fencing-token guards are implemented for M1.6.
+- There is no MCP server or queue workbench UI yet.
 - Existing M1 capability expectations are defined in `MILESTONES.md`.
 
 ## M1 Outcomes
@@ -445,6 +447,8 @@ Planned command resources:
 - `POST /work-items/{id}/claim`
 - `POST /leases/{id}/heartbeat`
 - `POST /worker-runs`
+- `POST /worker-runs/{id}/heartbeat`
+- `POST /worker-runs/{id}/report`
 - `POST /worker-runs/{id}/close`
 - `POST /repositories/{id}/sync`
 - `POST /webhooks/github`
@@ -617,6 +621,8 @@ Validate:
 - privacy checks for stored payload summaries.
 
 ### M1.6 Worker Run Lifecycle
+
+Status: implemented.
 
 Deliver:
 

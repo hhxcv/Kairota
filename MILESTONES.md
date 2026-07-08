@@ -26,7 +26,7 @@ Status: current.
 Goal: replace GitHub Project for AI development scheduling while keeping the
 core model repository-provider neutral.
 
-Current slice: M1.0 Runtime Foundation.
+Current slice: M1.1 Core Schema And Contracts.
 
 Expected capabilities:
 

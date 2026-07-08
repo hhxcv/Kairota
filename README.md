@@ -13,10 +13,10 @@ experience sharing, and consultant-style agents.
 
 ## Status
 
-M1 implementation has started. The current runtime foundation includes a FastAPI
-health endpoint, CLI entry point, Alembic baseline migration, and Vite React
-frontend shell. Scheduler, work item schema, GitHub sync, worker runtime, and
-queue data flows are not implemented yet.
+M1 implementation has started. Current runtime code includes a FastAPI health
+endpoint, CLI entry point, Alembic migrations, Vite React frontend shell, core
+database schema, and Pydantic contracts. Scheduler behavior, GitHub sync, worker
+runtime, and queue data flows are not implemented yet.
 
 ## Current Commands
 

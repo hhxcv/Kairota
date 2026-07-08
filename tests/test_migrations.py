@@ -12,7 +12,28 @@ def test_baseline_migration_upgrades_and_downgrades(tmp_path: Path) -> None:
 
     command.upgrade(config, "head")
     engine = create_engine(f"sqlite:///{db_path.as_posix()}")
-    assert "alembic_version" in inspect(engine).get_table_names()
+    tables = set(inspect(engine).get_table_names())
+    assert {
+        "alembic_version",
+        "audit_events",
+        "external_refs",
+        "inbound_events",
+        "leases",
+        "lock_holders",
+        "outbox_events",
+        "repo_check_summaries",
+        "repo_pull_requests",
+        "repo_review_summaries",
+        "repositories",
+        "scheduler_cycles",
+        "scheduler_decisions",
+        "scheduler_guards",
+        "sync_cursors",
+        "work_item_conflict_keys",
+        "work_item_dependencies",
+        "work_items",
+        "worker_runs",
+    } <= tables
 
     command.downgrade(config, "base")
     with engine.connect() as connection:

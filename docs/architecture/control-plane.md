@@ -2,7 +2,7 @@
 doc:
   updated_at: 2026-07-08
   category: architecture
-  status: draft
+  status: mixed-current-planned
   audience: ai
   keywords: [control-plane, architecture, product-scope]
   description: "Defines the planned Kairota control-plane architecture and boundaries."
@@ -10,7 +10,8 @@ doc:
 
 # Control Plane Architecture
 
-Status: draft. Product runtime code is not implemented yet.
+Status: mixed current and planned. M1 runtime foundation has started; scheduler,
+worker runtime, GitHub sync, and queue data flows are not implemented yet.
 
 ## Purpose
 
@@ -48,9 +49,10 @@ is the first adapter, not the core architecture boundary.
 
 ## Open Decisions
 
-- Backend framework.
-- Frontend framework.
-- Initial auth model.
-- Exact database schema.
-- Whether durable workflow execution needs Temporal or a smaller Postgres outbox first.
-- Which GitHub-specific fields belong only in the first adapter.
+- M1 initial runtime, scheduler, adapter, and UI choices are drafted in
+  `docs/architecture/m1-ai-dev-queue.md`.
+- Initial auth model beyond single-operator local mode.
+- Exact database schema as implemented migrations.
+- Threshold for introducing Temporal or another durable workflow engine after M1.
+- Which GitHub-specific fields need long-term adapter-only retention after the
+  first adapter is implemented.

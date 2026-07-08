@@ -13,18 +13,36 @@ experience sharing, and consultant-style agents.
 
 ## Status
 
-Repository incubation is in progress. Product runtime code is not implemented
-yet. Current files establish AI development rules, docs routing, initial skills,
-and planned product contracts.
+M1 implementation has started. The current runtime foundation includes a FastAPI
+health endpoint, CLI entry point, Alembic baseline migration, and Vite React
+frontend shell. Scheduler, work item schema, GitHub sync, worker runtime, and
+queue data flows are not implemented yet.
 
 ## Current Commands
 
 ```bash
+python -m pip install -e ".[dev]"
+python -m pytest
+ruff check src tests migrations
+mypy src
+kairota health
 python .agents/checks/check_ai_governance.py
 git diff --check
 ```
 
-Product build, test, and run commands are not established yet.
+Frontend:
+
+```bash
+cd web
+npm install
+npm run build
+```
+
+Database migrations require `KAIROTA_DATABASE_URL` to be set:
+
+```bash
+alembic upgrade head
+```
 
 ## Docs
 

@@ -12,15 +12,28 @@ doc:
 
 ## Current Repo State
 
-Product code is not implemented yet. Validation focuses on docs, skills, and
-governance.
+M1 runtime foundation is implemented. Scheduler, work item schema, GitHub sync,
+worker runtime, and queue data flows are not implemented yet.
 
 ## Checks
 
 ```bash
+python -m pytest
+ruff check src tests migrations
+mypy src
 python .agents/checks/check_ai_governance.py
 git diff --check
 ```
+
+Frontend:
+
+```bash
+cd web
+npm run build
+```
+
+Migration baseline is validated by tests. Running migrations against a real
+database requires `KAIROTA_DATABASE_URL`.
 
 ## Skill Validation
 
@@ -35,4 +48,4 @@ machine-specific paths into public docs.
 
 ## Future Checks
 
-Add product test commands only after product runtime code exists.
+Add scheduler, integration, and browser checks when those runtime slices exist.

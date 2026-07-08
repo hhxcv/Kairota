@@ -1,8 +1,8 @@
 # MILESTONES
 
-## Active: M0 Project Incubation
+## Completed: M0 Project Incubation
 
-Status: current.
+Status: completed.
 
 Goal: establish Kairota as an AI-readable repository before product runtime
 implementation starts.
@@ -19,10 +19,14 @@ Out of scope:
 - Product backend, frontend, scheduler, database schema, worker runtime, or API implementation.
 - Public release packaging.
 
-## Planned: M1 AI Dev Queue MVP
+## Active: M1 AI Dev Queue MVP
+
+Status: current.
 
 Goal: replace GitHub Project for AI development scheduling while keeping the
 core model repository-provider neutral.
+
+Current slice: M1.0 Runtime Foundation.
 
 Expected capabilities:
 

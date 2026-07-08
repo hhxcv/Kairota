@@ -1,0 +1,183 @@
+:root {
+  color: #1b1f24;
+  background: #f5f6f3;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+}
+
+button,
+input,
+textarea,
+select {
+  font: inherit;
+}
+
+.app-shell {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.topbar {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  padding-block-end: 20px;
+  border-bottom: 1px solid #d9ddd5;
+}
+
+.eyebrow {
+  margin: 0 0 6px;
+  color: #5d6760;
+  font-size: 0.82rem;
+  font-weight: 650;
+}
+
+h1,
+h2,
+p {
+  margin: 0;
+}
+
+h1 {
+  font-size: clamp(2rem, 4vw, 3.2rem);
+  line-height: 1;
+}
+
+.sync-state {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  gap: 8px;
+  padding: 7px 10px;
+  border: 1px solid #cfd6ce;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #46504a;
+  font-size: 0.9rem;
+}
+
+.sync-state__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #397367;
+}
+
+.queue-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  padding-block-start: 20px;
+}
+
+.queue-column {
+  display: flex;
+  min-height: 260px;
+  flex-direction: column;
+  border: 1px solid #d8ddd6;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.queue-column__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 48px;
+  padding: 12px;
+  border-bottom: 1px solid #edf0eb;
+}
+
+.queue-column h2 {
+  overflow: hidden;
+  font-size: 1rem;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-column__body {
+  display: grid;
+  min-height: 210px;
+  place-items: center;
+  padding: 12px;
+}
+
+.status-pill {
+  display: inline-grid;
+  min-width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 999px;
+  color: #ffffff;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.status-pill--green {
+  background: #397367;
+}
+
+.status-pill--blue {
+  background: #2f5f98;
+}
+
+.status-pill--amber {
+  background: #946521;
+}
+
+.status-pill--red {
+  background: #9a3f3f;
+}
+
+.status-pill--gray {
+  background: #65706b;
+}
+
+.empty-state {
+  color: #717a74;
+  font-size: 0.95rem;
+}
+
+.work-row {
+  width: 100%;
+  padding: 10px;
+  border: 1px solid #e2e6df;
+  border-radius: 6px;
+}
+
+@media (max-width: 900px) {
+  .queue-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 620px) {
+  .app-shell {
+    padding: 16px;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .queue-grid {
+    grid-template-columns: 1fr;
+  }
+}

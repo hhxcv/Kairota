@@ -26,7 +26,7 @@ Status: current.
 Goal: replace GitHub Project for AI development scheduling while keeping the
 core model repository-provider neutral.
 
-Current slice: M1.3 Claims, Leases, And Conflict Locks.
+Current slice: M1.5 GitHub Sync Adapter.
 
 Expected capabilities:
 

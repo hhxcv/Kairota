@@ -34,6 +34,7 @@ class ContractModel(BaseModel):
 
 class WorkItemCreate(ContractModel):
     title: str = Field(min_length=1, max_length=240)
+    status: WorkItemStatus = WorkItemStatus.NEEDS_TRIAGE
     priority: int = Field(default=100, ge=0)
     risk: RiskLevel = RiskLevel.MEDIUM
     work_type: WorkType = WorkType.IMPLEMENTATION
@@ -42,13 +43,21 @@ class WorkItemCreate(ContractModel):
     validation: str | None = None
     expected_touch: str | None = None
     source_url: str | None = None
+    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
+    dependency_ids: tuple[str, ...] = Field(default_factory=tuple)
 
 
 class WorkItemRead(WorkItemCreate):
     id: str
-    status: WorkItemStatus
     created_at: datetime | None = None
     updated_at: datetime | None = None
+
+
+class QueueSummaryRead(ContractModel):
+    total: int
+    by_status: dict[str, int] = Field(default_factory=dict)
+    active_leases: int
+    active_locks: int
 
 
 class SchedulerDecisionRead(ContractModel):
@@ -60,6 +69,20 @@ class SchedulerDecisionRead(ContractModel):
     blocking_facts: JsonObject = Field(default_factory=dict)
 
 
+class SchedulerCycleCreate(ContractModel):
+    queue_key: str = Field(default="default", min_length=1, max_length=160)
+    capacity: int = Field(default=1, ge=0, le=100)
+
+
+class SchedulerCycleRead(ContractModel):
+    id: str
+    queue_key: str
+    result: str
+    assigned_count: int
+    rejected_count: int
+    decisions: tuple[SchedulerDecisionRead, ...] = Field(default_factory=tuple)
+
+
 class LeaseRead(ContractModel):
     id: str
     work_item_id: str
@@ -67,6 +90,44 @@ class LeaseRead(ContractModel):
     status: LeaseStatus
     fencing_token: str
     expires_at: datetime
+
+
+class ClaimWorkItemCommand(ContractModel):
+    owner: str = Field(min_length=1, max_length=160)
+    lease_ttl_seconds: int = Field(default=1800, gt=0, le=86_400)
+
+
+class ClaimWorkItemRead(ContractModel):
+    claimed: bool
+    work_item_id: str
+    lease_id: str | None = None
+    fencing_token: str | None = None
+    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
+    reason: SchedulerDecisionCode | None = None
+    explanation: str | None = None
+
+
+class LeaseHeartbeatCommand(ContractModel):
+    fencing_token: str = Field(min_length=1, max_length=120)
+    lease_ttl_seconds: int = Field(default=1800, gt=0, le=86_400)
+
+
+class LeaseHeartbeatRead(ContractModel):
+    refreshed: bool
+    lease_id: str
+    explanation: str | None = None
+
+
+class LeaseExpiryRead(ContractModel):
+    expired_lease_ids: tuple[str, ...] = Field(default_factory=tuple)
+    released_lock_ids: tuple[str, ...] = Field(default_factory=tuple)
+
+
+class BlockedCommandResponse(ContractModel):
+    status: str = "blocked"
+    reason_code: str
+    explanation: str
+    details: JsonObject = Field(default_factory=dict)
 
 
 class LockHolderRead(ContractModel):

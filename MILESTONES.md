@@ -26,7 +26,7 @@ Status: current.
 Goal: replace GitHub Project for AI development scheduling while keeping the
 core model repository-provider neutral.
 
-Current slice: M1.1 Core Schema And Contracts.
+Current slice: M1.2 State Machine And Scheduler Planner.
 
 Expected capabilities:
 

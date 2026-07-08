@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kairota Design Review"
+  short_description: "Review Kairota technical and product design plans."
+  default_prompt: "Use $kairota-design-review-skill to review a Kairota design before implementation."

@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kairota Docs Update"
+  short_description: "Maintain Kairota AI-readable docs and skill boundaries."
+  default_prompt: "Use $kairota-docs-update-skill to update Kairota docs or skills with concise owner routing."

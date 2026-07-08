@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kairota Development Orchestration"
+  short_description: "Coordinate broad Kairota work from brief through validation."
+  default_prompt: "Use $kairota-development-orchestration-skill to plan and coordinate a broad Kairota development task."

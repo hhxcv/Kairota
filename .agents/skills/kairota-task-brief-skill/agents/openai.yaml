@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kairota Task Brief"
+  short_description: "Create compact task briefs and completion boundaries."
+  default_prompt: "Use $kairota-task-brief-skill to turn a Kairota request into an executable brief."

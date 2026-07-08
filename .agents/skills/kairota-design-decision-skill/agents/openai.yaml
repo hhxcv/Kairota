@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kairota Design Decision"
+  short_description: "Make Kairota architecture and product design decisions."
+  default_prompt: "Use $kairota-design-decision-skill to decide a Kairota architecture or interface tradeoff."

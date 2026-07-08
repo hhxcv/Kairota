@@ -1,0 +1,4 @@
+interface:
+  display_name: "Kairota Validation Selection"
+  short_description: "Choose narrow validation for Kairota docs, tools, and code."
+  default_prompt: "Use $kairota-validation-selection-skill to choose checks for a Kairota change."

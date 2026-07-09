@@ -1,6 +1,6 @@
 ---
 doc:
-  updated_at: 2026-07-08
+  updated_at: 2026-07-09
   category: validation
   status: current
   audience: ai
@@ -13,11 +13,11 @@ doc:
 ## Current Repo State
 
 M1 runtime foundation, core schema/contracts, state machine, pure scheduler
-planner, claim and lease services, REST/CLI surfaces, GitHub sync, worker run
-lifecycle commands, repository registration, repository-scoped scheduling,
-managed-project triage, queue workbench UI, development demo seed fixtures,
-recovery signals, root managed-project skill, dogfood skill sync, and M1 exit
-smoke checks are implemented. MCP is not implemented yet.
+planner, claim and lease services, REST/CLI surfaces, bounded GitHub issue sync,
+worker run lifecycle commands, repository registration, repository-scoped
+scheduling, patch-like managed-project triage, queue workbench UI, development
+demo seed fixtures, recovery signals, root managed-project skill, dogfood skill
+sync, and M1 exit smoke checks are implemented. MCP is not implemented yet.
 
 ## Checks
 

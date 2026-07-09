@@ -7,6 +7,8 @@ from kairota.contracts.enums import (
     CheckConclusion,
     CheckStatus,
     PullRequestState,
+    RepositoryIssueState,
+    RepositorySyncMode,
     ReviewGateState,
 )
 
@@ -83,6 +85,16 @@ class GitHubSyncSnapshot:
 
 
 @dataclass(frozen=True)
+class GitHubSyncOptions:
+    mode: RepositorySyncMode = RepositorySyncMode.FULL
+    issue_state: RepositoryIssueState = RepositoryIssueState.ALL
+    labels: tuple[str, ...] = field(default_factory=tuple)
+    issue_numbers: tuple[int, ...] = field(default_factory=tuple)
+    since: str | None = None
+    max_pages: int | None = None
+
+
+@dataclass(frozen=True)
 class GitHubWebhookEvent:
     event_type: str
     delivery_id: str
@@ -97,6 +109,7 @@ class GitHubClient(Protocol):
         self,
         repository: GitHubRepositoryConfig,
         cursor: str | None = None,
+        options: GitHubSyncOptions | None = None,
     ) -> GitHubSyncSnapshot:
         """Return one bounded repository snapshot for polling sync."""
         ...

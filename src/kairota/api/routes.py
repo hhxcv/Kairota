@@ -27,6 +27,7 @@ from kairota.contracts.schemas import (
     QueueWorkbenchRead,
     RepositoryCreate,
     RepositoryRead,
+    RepositorySyncCommand,
     RepositorySyncRead,
     SchedulerCycleCreate,
     SchedulerCycleRead,
@@ -210,7 +211,10 @@ def api_claim_next_work_item(
             409,
             str(result.reason or "no_schedulable_work"),
             result.explanation or "No schedulable work item was found.",
-            {"repository_id": command.repository_id},
+            {
+                "repository_id": command.repository_id,
+                "blocked_counts": result.blocked_counts,
+            },
         )
     return result
 
@@ -500,6 +504,7 @@ def api_sync_repository(
     repository_id: str,
     session: SessionDependency,
     github_client: GitHubClientDependency,
+    command: RepositorySyncCommand | None = None,
     idempotency_key: IdempotencyHeader = None,
 ) -> RepositorySyncRead | JSONResponse:
     if not idempotency_key:
@@ -515,6 +520,7 @@ def api_sync_repository(
                 repository_id=repository_id,
                 idempotency_key=idempotency_key,
                 client=github_client,
+                command=command,
             )
     except IdempotencyConflictError as exc:
         return blocked_response(409, "idempotency_conflict", str(exc))

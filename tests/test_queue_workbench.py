@@ -30,6 +30,7 @@ from kairota.models.records import (
     WorkerRun,
     WorkItem,
     WorkItemConflictKey,
+    WorkItemDependency,
 )
 from kairota.services.queue_workbench import queue_workbench
 
@@ -54,6 +55,16 @@ def test_queue_workbench_groups_sections_and_decision_inbox(
     now = datetime(2026, 1, 1, tzinfo=UTC)
     with Session(migrated_engine) as session, session.begin():
         ready = add_work_item(session, "ready-1", WorkItemStatus.READY)
+        unfinished_dependency = add_work_item(
+            session,
+            "unfinished-dependency",
+            WorkItemStatus.BACKLOG,
+        )
+        dependency_blocked_ready = add_work_item(
+            session,
+            "ready-with-dependency",
+            WorkItemStatus.READY,
+        )
         running = add_work_item(session, "running-1", WorkItemStatus.IMPLEMENTING)
         blocked = add_work_item(session, "blocked-1", WorkItemStatus.HUMAN_DECISION)
         waiting = add_work_item(session, "waiting-1", WorkItemStatus.WAITING_CHECKS)
@@ -61,6 +72,13 @@ def test_queue_workbench_groups_sections_and_decision_inbox(
         add_work_item(session, "done-1", WorkItemStatus.DONE)
         blocked_id = blocked.id
         failed_id = failed.id
+        dependency_blocked_ready_id = dependency_blocked_ready.id
+        session.add(
+            WorkItemDependency(
+                work_item_id=dependency_blocked_ready.id,
+                depends_on_work_item_id=unfinished_dependency.id,
+            )
+        )
         session.add(
             WorkItemConflictKey(
                 work_item_id=ready.id,
@@ -164,6 +182,12 @@ def test_queue_workbench_groups_sections_and_decision_inbox(
     assert sections["waiting"].rows[0].repository["pull_request_number"] == 7
     assert sections["failed"].rows[0].reason_code == "blocked_by_ci"
     assert sections["done"].rows[0].next_action == "No action"
+    blocked_ready_rows = [
+        row for row in sections["blocked"].rows if row.id == dependency_blocked_ready_id
+    ]
+    assert blocked_ready_rows[0].status == WorkItemStatus.READY
+    assert blocked_ready_rows[0].reason_code == "blocked_by_dependency"
+    assert blocked_ready_rows[0].next_action == "Wait for dependencies to close"
     assert {row.id for row in result.decision_inbox} == {blocked_id, failed_id}
     assert result.recent_events[0].summary == "Ready work created."
     assert result.failures[0].kind == "inbound_event"

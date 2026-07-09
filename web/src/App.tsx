@@ -11,17 +11,24 @@ import {
   ShieldAlert,
 } from "lucide-react";
 
-import { fetchQueueWorkbench } from "./api";
+import {
+  fetchQueueWorkbench,
+  fetchRepositories,
+  fetchRuntimeHealth,
+  getApiBaseUrl,
+} from "./api";
 import "./styles.css";
 import {
   allRows,
   emptyWorkbench,
   sectionTones,
+  type Repository,
   type QueueWorkbench,
   type QueueWorkbenchEvent,
   type QueueWorkbenchRecoverySignal,
   type QueueWorkbenchRow,
   type QueueWorkbenchSection,
+  type RuntimeHealth,
   type SectionId,
 } from "./workbench";
 
@@ -38,33 +45,73 @@ const sectionIcons: Record<SectionId, typeof CircleDot> = {
 };
 
 const allSections = "all";
+const unscopedProjectId = "__unscoped__";
+
+type ProjectFilterOption = {
+  id: string;
+  label: string;
+  count: number;
+  syncStatus: string | null;
+};
 
 export function App() {
   const [workbench, setWorkbench] = useState<QueueWorkbench>(emptyWorkbench);
+  const [repositories, setRepositories] = useState<Repository[]>([]);
+  const [repositoriesError, setRepositoriesError] = useState<string | null>(null);
   const [source, setSource] = useState<DataSource>("empty");
   const [loadState, setLoadState] = useState<LoadState>("idle");
   const [loadError, setLoadError] = useState<string | null>(null);
+  const [health, setHealth] = useState<RuntimeHealth | null>(null);
+  const [healthError, setHealthError] = useState<string | null>(null);
+  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
   const [activeSection, setActiveSection] = useState<SectionId | typeof allSections>(
     allSections,
   );
   const [query, setQuery] = useState("");
+  const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
   const [selectedRowId, setSelectedRowId] = useState<string>("");
+  const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
 
   const loadWorkbench = useCallback(async (signal?: AbortSignal) => {
     setLoadState("loading");
     try {
-      const data = await fetchQueueWorkbench(signal);
+      const [data, runtime, repositoryResult] = await Promise.all([
+        fetchQueueWorkbench(signal),
+        fetchRuntimeHealth(signal)
+          .then((value) => ({ value, error: null }))
+          .catch((error) => ({
+            value: null,
+            error: error instanceof Error ? error.message : "Health request failed",
+          })),
+        fetchRepositories(signal)
+          .then((value) => ({ value, error: null }))
+          .catch((error) => ({
+            value: [] as Repository[],
+            error:
+              error instanceof Error ? error.message : "Repositories request failed",
+          })),
+      ]);
       setWorkbench(data);
+      setRepositories(repositoryResult.value);
+      setRepositoriesError(repositoryResult.error);
       setSource("api");
       setLoadError(null);
+      setHealth(runtime.value);
+      setHealthError(runtime.error);
+      setLastRefreshAt(new Date().toISOString());
       setSelectedRowId((current) => current || allRows(data)[0]?.id || "");
     } catch (error) {
       if (signal?.aborted) {
         return;
       }
       setWorkbench(emptyWorkbench);
+      setRepositories([]);
+      setRepositoriesError(null);
       setSource("empty");
       setLoadError(error instanceof Error ? error.message : "Request failed");
+      setHealth(null);
+      setHealthError(null);
+      setLastRefreshAt(new Date().toISOString());
       setSelectedRowId("");
     } finally {
       if (!signal?.aborted) {
@@ -84,13 +131,24 @@ export function App() {
     () => new Map(rows.map((row) => [row.id, row])),
     [rows],
   );
+  const repositoryById = useMemo(
+    () => new Map(repositories.map((repository) => [repository.id, repository])),
+    [repositories],
+  );
+  const searchMatchedRows = useMemo(() => filterRows(rows, query, []), [query, rows]);
+  const projectOptions = useMemo(
+    () => buildProjectOptions(searchMatchedRows, repositories),
+    [repositories, searchMatchedRows],
+  );
   const navSections = useMemo(
-    () => filterSections(workbench.sections, allSections, query),
-    [query, workbench.sections],
+    () =>
+      filterSections(workbench.sections, allSections, query, selectedRepositoryIds),
+    [query, selectedRepositoryIds, workbench.sections],
   );
   const filteredSections = useMemo(
-    () => filterSections(workbench.sections, activeSection, query),
-    [activeSection, query, workbench.sections],
+    () =>
+      filterSections(workbench.sections, activeSection, query, selectedRepositoryIds),
+    [activeSection, query, selectedRepositoryIds, workbench.sections],
   );
   const navRows = useMemo(() => rowsFromSections(navSections), [navSections]);
   const visibleRows = useMemo(
@@ -98,13 +156,20 @@ export function App() {
     [filteredSections],
   );
   const decisionRows = useMemo(
-    () => filterRows(workbench.decision_inbox, query),
-    [query, workbench.decision_inbox],
+    () => filterRows(workbench.decision_inbox, query, selectedRepositoryIds),
+    [query, selectedRepositoryIds, workbench.decision_inbox],
   );
   const selectedRow =
     visibleRows.find((row) => row.id === selectedRowId) ?? visibleRows[0] ?? null;
   const totalSuffix =
     visibleRows.length === rows.length ? "" : ` (${rows.length} total)`;
+  const toggleRepository = useCallback((repositoryId: string) => {
+    setSelectedRepositoryIds((current) =>
+      current.includes(repositoryId)
+        ? current.filter((id) => id !== repositoryId)
+        : [...current, repositoryId],
+    );
+  }, []);
 
   return (
     <main className="app-shell">
@@ -167,11 +232,28 @@ export function App() {
           </div>
         </header>
 
+        <ProjectFilter
+          allCount={searchMatchedRows.length}
+          error={repositoriesError}
+          onClear={() => setSelectedRepositoryIds([])}
+          onToggle={toggleRepository}
+          options={projectOptions}
+          selectedRepositoryIds={selectedRepositoryIds}
+        />
+
         <SummaryStrip
           decisionCount={decisionRows.length}
           failureCount={workbench.failures.length}
           summary={workbench.summary}
           visibleCount={visibleRows.length}
+        />
+
+        <RuntimeStatus
+          apiBaseUrl={apiBaseUrl}
+          health={health}
+          healthError={healthError}
+          lastRefreshAt={lastRefreshAt}
+          loadState={loadState}
         />
 
         {loadError ? (
@@ -186,6 +268,7 @@ export function App() {
               <QueueSection
                 key={section.id}
                 onSelect={setSelectedRowId}
+                repositoryById={repositoryById}
                 section={section}
                 selectedRowId={selectedRow?.id ?? ""}
               />
@@ -194,12 +277,17 @@ export function App() {
 
           <aside className="detail-rail" aria-label="Work item details">
             {selectedRow ? (
-              <DetailPanel row={selectedRow} rowsById={rowsById} />
+              <DetailPanel
+                repositoryById={repositoryById}
+                row={selectedRow}
+                rowsById={rowsById}
+              />
             ) : (
               <EmptyDetail />
             )}
             <DecisionInbox
               onSelect={setSelectedRowId}
+              repositoryById={repositoryById}
               rows={decisionRows}
               selectedRowId={selectedRow?.id ?? ""}
             />
@@ -210,6 +298,100 @@ export function App() {
         </div>
       </section>
     </main>
+  );
+}
+
+function RuntimeStatus({
+  apiBaseUrl,
+  health,
+  healthError,
+  lastRefreshAt,
+  loadState,
+}: {
+  apiBaseUrl: string;
+  health: RuntimeHealth | null;
+  healthError: string | null;
+  lastRefreshAt: string | null;
+  loadState: LoadState;
+}) {
+  const cells = [
+    ["API Base", apiBaseUrl],
+    ["Health", health ? `${health.service} ${health.version}` : healthError ?? "unknown"],
+    ["Database", health?.database_identity ?? "unknown"],
+    ["Refresh", loadState === "loading" ? "loading" : formatDate(lastRefreshAt)],
+  ];
+  return (
+    <section className="runtime-panel" aria-label="Runtime status">
+      {cells.map(([label, value]) => (
+        <div className="runtime-cell" key={label}>
+          <span>{label}</span>
+          <strong>{value}</strong>
+        </div>
+      ))}
+    </section>
+  );
+}
+
+function ProjectFilter({
+  allCount,
+  error,
+  onClear,
+  onToggle,
+  options,
+  selectedRepositoryIds,
+}: {
+  allCount: number;
+  error: string | null;
+  onClear: () => void;
+  onToggle: (repositoryId: string) => void;
+  options: ProjectFilterOption[];
+  selectedRepositoryIds: string[];
+}) {
+  const selected = new Set(selectedRepositoryIds);
+  return (
+    <section className="project-filter" aria-label="Project filter">
+      <div className="project-filter__heading">
+        <span>Projects</span>
+        <strong>
+          {selectedRepositoryIds.length > 0
+            ? `${selectedRepositoryIds.length} selected`
+            : "All projects"}
+        </strong>
+      </div>
+      <div className="project-filter__options">
+        <button
+          aria-pressed={selectedRepositoryIds.length === 0}
+          className={`filter-chip${
+            selectedRepositoryIds.length === 0 ? " filter-chip--active" : ""
+          }`}
+          onClick={onClear}
+          type="button"
+        >
+          <span className="filter-chip__main">All</span>
+          <strong>{allCount}</strong>
+        </button>
+        {options.map((option) => (
+          <button
+            aria-pressed={selected.has(option.id)}
+            className={`filter-chip${selected.has(option.id) ? " filter-chip--active" : ""}`}
+            key={option.id}
+            onClick={() => onToggle(option.id)}
+            type="button"
+          >
+            <span className="filter-chip__main">{option.label}</span>
+            {option.syncStatus ? (
+              <span className="filter-chip__meta">{option.syncStatus}</span>
+            ) : null}
+            <strong>{option.count}</strong>
+          </button>
+        ))}
+      </div>
+      {error ? (
+        <p className="project-filter__error" role="status">
+          Project list unavailable - {error}
+        </p>
+      ) : null}
+    </section>
   );
 }
 
@@ -272,10 +454,12 @@ function NavButton({
 
 function QueueSection({
   onSelect,
+  repositoryById,
   section,
   selectedRowId,
 }: {
   onSelect: (rowId: string) => void;
+  repositoryById: Map<string, Repository>;
   section: QueueWorkbenchSection;
   selectedRowId: string;
 }) {
@@ -297,6 +481,7 @@ function QueueSection({
             <WorkRow
               key={row.id}
               onSelect={onSelect}
+              repositoryById={repositoryById}
               row={row}
               selected={row.id === selectedRowId}
             />
@@ -311,13 +496,16 @@ function QueueSection({
 
 function WorkRow({
   onSelect,
+  repositoryById,
   row,
   selected,
 }: {
   onSelect: (rowId: string) => void;
+  repositoryById: Map<string, Repository>;
   row: QueueWorkbenchRow;
   selected: boolean;
 }) {
+  const projectLabel = repositoryLabel(row.repository_id, repositoryById);
   return (
     <button
       className={`work-row${selected ? " work-row--selected" : ""}`}
@@ -325,6 +513,9 @@ function WorkRow({
       type="button"
     >
       <span className="work-row__title">{row.title}</span>
+      <span className="work-row__project" title={projectLabel}>
+        {projectLabel}
+      </span>
       <span className="work-row__meta">
         P{row.priority} - {row.risk} - {row.work_type}
       </span>
@@ -335,13 +526,16 @@ function WorkRow({
 }
 
 function DetailPanel({
+  repositoryById,
   row,
   rowsById,
 }: {
+  repositoryById: Map<string, Repository>;
   row: QueueWorkbenchRow;
   rowsById: Map<string, QueueWorkbenchRow>;
 }) {
   const repository = row.repository;
+  const projectLabel = repositoryLabel(row.repository_id, repositoryById);
   return (
     <section className="detail-panel" aria-label="Selected work item">
       <div className="detail-panel__title">
@@ -353,7 +547,9 @@ function DetailPanel({
         <DetailFact label="Priority" value={`P${row.priority}`} />
         <DetailFact label="Risk" value={row.risk} />
         <DetailFact label="Type" value={row.work_type} />
+        <DetailFact label="Project" value={projectLabel} />
       </div>
+      <DetailText label="Source" value={row.source_url ?? "not linked"} />
       <DetailText label="Reason" value={row.reason_code} />
       <DetailText label="Next Action" value={row.next_action} />
       <DetailText label="Expected Touch" value={row.expected_touch ?? "not set"} />
@@ -463,10 +659,12 @@ function RepositorySummary({
 
 function DecisionInbox({
   onSelect,
+  repositoryById,
   rows,
   selectedRowId,
 }: {
   onSelect: (rowId: string) => void;
+  repositoryById: Map<string, Repository>;
   rows: QueueWorkbenchRow[];
   selectedRowId: string;
 }) {
@@ -487,7 +685,9 @@ function DecisionInbox({
             type="button"
           >
             <strong>{row.title}</strong>
-            <span>{row.reason_code}</span>
+            <span>
+              {repositoryLabel(row.repository_id, repositoryById)} - {row.reason_code}
+            </span>
           </button>
         ))
       ) : (
@@ -569,28 +769,100 @@ function rowsFromSections(sections: QueueWorkbenchSection[]): QueueWorkbenchRow[
   return sections.flatMap((section) => section.rows);
 }
 
-function filterRows(rows: QueueWorkbenchRow[], query: string): QueueWorkbenchRow[] {
+function filterRows(
+  rows: QueueWorkbenchRow[],
+  query: string,
+  selectedRepositoryIds: string[],
+): QueueWorkbenchRow[] {
   const normalizedQuery = query.trim().toLowerCase();
-  if (!normalizedQuery) {
-    return rows;
-  }
-  return rows.filter((row) => matchesRow(row, normalizedQuery));
+  return rows.filter(
+    (row) =>
+      rowMatchesProject(row, selectedRepositoryIds) &&
+      (!normalizedQuery || matchesRow(row, normalizedQuery)),
+  );
 }
 
 function filterSections(
   sections: QueueWorkbenchSection[],
   activeSection: SectionId | typeof allSections,
   query: string,
+  selectedRepositoryIds: string[],
 ): QueueWorkbenchSection[] {
   const normalizedQuery = query.trim().toLowerCase();
   return sections
     .filter((section) => activeSection === allSections || section.id === activeSection)
     .map((section) => {
-      const rows = normalizedQuery
-        ? section.rows.filter((row) => matchesRow(row, normalizedQuery))
-        : section.rows;
+      const rows = section.rows.filter(
+        (row) =>
+          rowMatchesProject(row, selectedRepositoryIds) &&
+          (!normalizedQuery || matchesRow(row, normalizedQuery)),
+      );
       return { ...section, count: rows.length, rows };
     });
+}
+
+function buildProjectOptions(
+  rows: QueueWorkbenchRow[],
+  repositories: Repository[],
+): ProjectFilterOption[] {
+  const counts = new Map<string, number>();
+  for (const row of rows) {
+    const projectId = row.repository_id ?? unscopedProjectId;
+    counts.set(projectId, (counts.get(projectId) ?? 0) + 1);
+  }
+
+  const knownRepositoryIds = new Set(repositories.map((repository) => repository.id));
+  const options = repositories.map((repository) => ({
+    id: repository.id,
+    label: repository.name,
+    count: counts.get(repository.id) ?? 0,
+    syncStatus: repository.sync_status,
+  }));
+
+  const unscopedCount = counts.get(unscopedProjectId) ?? 0;
+  if (unscopedCount > 0) {
+    options.unshift({
+      id: unscopedProjectId,
+      label: "Unscoped",
+      count: unscopedCount,
+      syncStatus: "local",
+    });
+  }
+
+  for (const [repositoryId, count] of counts) {
+    if (repositoryId !== unscopedProjectId && !knownRepositoryIds.has(repositoryId)) {
+      options.push({
+        id: repositoryId,
+        label: `Unknown project ${shortIdentifier(repositoryId)}`,
+        count,
+        syncStatus: "not registered",
+      });
+    }
+  }
+
+  return options;
+}
+
+function rowMatchesProject(
+  row: QueueWorkbenchRow,
+  selectedRepositoryIds: string[],
+): boolean {
+  if (selectedRepositoryIds.length === 0) {
+    return true;
+  }
+  return selectedRepositoryIds.includes(row.repository_id ?? unscopedProjectId);
+}
+
+function repositoryLabel(
+  repositoryId: string | null,
+  repositoryById: Map<string, Repository>,
+): string {
+  if (!repositoryId) {
+    return "Unscoped";
+  }
+  return (
+    repositoryById.get(repositoryId)?.name ?? `Unknown project ${shortIdentifier(repositoryId)}`
+  );
 }
 
 function matchesRow(row: QueueWorkbenchRow, normalizedQuery: string): boolean {
@@ -600,6 +872,7 @@ function matchesRow(row: QueueWorkbenchRow, normalizedQuery: string): boolean {
     row.reason_code,
     row.next_action,
     row.expected_touch ?? "",
+    row.source_url ?? "",
   ]
     .join(" ")
     .toLowerCase()
@@ -622,4 +895,8 @@ function stringValue(value: unknown, fallback: string): string {
 
 function slug(value: string): string {
   return value.toLowerCase().replace(/\s+/g, "-");
+}
+
+function shortIdentifier(value: string): string {
+  return value.length > 8 ? value.slice(0, 8) : value;
 }

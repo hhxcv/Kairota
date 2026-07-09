@@ -45,13 +45,15 @@ issue in the first adapter, but Kairota owns the scheduling facts.
 | `POST /work-items` | Create a Kairota work item with optional repository scope. |
 | `GET /work-items` | List work items, optionally filtered by status or repository id. |
 | `GET /work-items/{id}` | Read one work item. |
-| `POST /work-items/{id}/triage` | Let project AI or a human set scheduling facts after issue analysis. |
+| `POST /work-items/{id}/triage` | Let project AI or a human patch scheduling facts after issue analysis. |
 | `kairota work-items create/list/show/triage/claim` | Local CLI access to the same core service layer. |
 
-Triage is explicit. Kairota does not infer dependency edges, conflict keys, or
-readiness from issue prose by itself. Expected touch, acceptance, validation,
-risk, work type, and autonomy mode improve reporting and workbench quality, but
-they are not required for scheduler eligibility.
+Triage is explicit and patch-like. Kairota does not infer dependency edges,
+conflict keys, or readiness from issue prose by itself. Omitted triage fields
+preserve existing values; explicit empty dependency or conflict lists clear
+those lists. Expected touch, acceptance, validation, risk, work type, and
+autonomy mode improve reporting and workbench quality, but they are not
+required for scheduler eligibility.
 
 ## Status Model
 
@@ -78,5 +80,7 @@ Blocking states:
 - GitHub sync creates newly discovered issues in `Needs Triage`.
 - GitHub issue close is the current completion signal for synced issue work and
   moves the work item to `Done`.
+- Worker-run close with result `done` can move non-PR work to `Done` when the
+  worker holds the active lease and fencing token.
 - Managed project AI analyzes the issue and submits dependency, conflict, and
   readiness facts back to Kairota. Other fields are project-management context.

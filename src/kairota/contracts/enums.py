@@ -58,6 +58,17 @@ class SchedulerDecisionCode(StrEnum):
     BLOCKED_BY_EXPIRED_OR_STALE_SOURCE = "blocked_by_expired_or_stale_source"
 
 
+class RepositorySyncMode(StrEnum):
+    FULL = "full"
+    ISSUES = "issues"
+
+
+class RepositoryIssueState(StrEnum):
+    ALL = "all"
+    OPEN = "open"
+    CLOSED = "closed"
+
+
 class LeaseStatus(StrEnum):
     ACTIVE = "active"
     EXPIRED = "expired"

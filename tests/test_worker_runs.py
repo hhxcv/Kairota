@@ -134,6 +134,38 @@ def test_worker_run_lifecycle_records_evidence_and_closes_done(
         assert all(lock.released_at is not None for lock in lease_locks)
 
 
+def test_worker_run_done_completes_non_pr_work(migrated_engine: Engine) -> None:
+    with Session(migrated_engine) as session, session.begin():
+        work_item = create_ready_work_item(session, idempotency_key="non-pr-work")
+        claim = claim_ready_work(session, work_item.id, idempotency_key="non-pr-claim")
+        assert claim.lease_id is not None
+        assert claim.fencing_token is not None
+        run = create_worker_run_command(
+            session,
+            command=WorkerRunCreateCommand(
+                work_item_id=work_item.id,
+                lease_id=claim.lease_id,
+                fencing_token=claim.fencing_token,
+            ),
+            idempotency_key="non-pr-run",
+            actor="test",
+        )
+
+        closed = close_worker_run_command(
+            session,
+            worker_run_id=run.id,
+            command=WorkerRunCloseCommand(
+                fencing_token=claim.fencing_token,
+                result=WorkerRunResult.DONE,
+            ),
+            idempotency_key="non-pr-close",
+            actor="test",
+        )
+
+        assert closed.status == WorkerRunStatus.CLOSED.value
+        assert session.get(WorkItem, work_item.id).status == WorkItemStatus.DONE.value
+
+
 def test_worker_run_create_rejects_missing_lease(migrated_engine: Engine) -> None:
     with Session(migrated_engine) as session, session.begin():
         work_item = create_ready_work_item(

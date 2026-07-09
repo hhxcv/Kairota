@@ -12,6 +12,7 @@ from kairota.adapters.github.models import (
     GitHubIssueSnapshot,
     GitHubRepositoryConfig,
     GitHubRepositorySnapshot,
+    GitHubSyncOptions,
     GitHubSyncSnapshot,
 )
 from kairota.api.app import create_app
@@ -53,8 +54,9 @@ class ComplexDogfoodGitHubClient:
         self,
         repository: GitHubRepositoryConfig,
         cursor: str | None = None,
+        options: GitHubSyncOptions | None = None,
     ) -> GitHubSyncSnapshot:
-        del cursor
+        del cursor, options
         self.calls.append(repository)
         return GitHubSyncSnapshot(
             repository=GitHubRepositorySnapshot(

@@ -15,21 +15,32 @@ from kairota.adapters.github.models import (
     GitHubIssueSnapshot,
     GitHubRepositoryConfig,
     GitHubRepositorySnapshot,
+    GitHubSyncOptions,
     GitHubSyncSnapshot,
 )
 from kairota.api.app import create_app
 from kairota.config import Settings
-from kairota.contracts.enums import RepositoryProvider, WorkItemStatus
+from kairota.contracts.enums import (
+    RepositoryIssueState,
+    RepositoryProvider,
+    RepositorySyncMode,
+    WorkItemStatus,
+)
 from kairota.models.records import Repository, WorkItem
 
 
 class FakeGitHubClient:
+    def __init__(self) -> None:
+        self.options: list[GitHubSyncOptions | None] = []
+
     def fetch_repository_snapshot(
         self,
         repository: GitHubRepositoryConfig,
         cursor: str | None = None,
+        options: GitHubSyncOptions | None = None,
     ) -> GitHubSyncSnapshot:
         del repository, cursor
+        self.options.append(options)
         return GitHubSyncSnapshot(
             repository=GitHubRepositorySnapshot(
                 provider_repo_id="repo-1",
@@ -53,11 +64,14 @@ def test_healthz_returns_runtime_identity() -> None:
     response = TestClient(app).get("/healthz")
 
     assert response.status_code == 200
-    assert response.json() == {
+    payload = response.json()
+    assert payload == {
         "status": "ok",
         "service": "Kairota Test",
         "version": "0.1.0",
+        "database_identity": payload["database_identity"],
     }
+    assert len(payload["database_identity"]) == 12
 
 
 def test_local_web_origin_is_allowed_by_cors() -> None:
@@ -302,6 +316,45 @@ def test_triage_and_claim_next_are_repository_scoped(client: TestClient) -> None
     assert unscoped_status == "ready"
 
 
+def test_triage_patch_preserves_omitted_scheduling_facts(
+    client: TestClient,
+) -> None:
+    dependency = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "triage-patch-dependency"},
+        json={"title": "Dependency", "status": "ready"},
+    )
+    assert dependency.status_code == 200
+    dependency_id = str(dependency.json()["id"])
+    work = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "triage-patch-work"},
+        json={
+            **ready_work_item_payload("Patch triage"),
+            "priority": 12,
+            "dependency_ids": [dependency_id],
+            "conflict_keys": ["runtime:patch"],
+        },
+    )
+    assert work.status_code == 200
+    work_item_id = str(work.json()["id"])
+
+    patched = client.post(
+        f"/work-items/{work_item_id}/triage",
+        headers={"Idempotency-Key": "triage-patch-status"},
+        json={"status": "blocked"},
+    )
+
+    assert patched.status_code == 200
+    payload = patched.json()
+    assert payload["status"] == "blocked"
+    assert payload["priority"] == 12
+    assert payload["acceptance"] == "REST contract exists"
+    assert payload["validation"] == "pytest"
+    assert payload["dependency_ids"] == [dependency_id]
+    assert payload["conflict_keys"] == ["runtime:patch"]
+
+
 def test_claim_next_enforces_repository_worker_cap(client: TestClient) -> None:
     repository_id = register_repository(client, "register-capped-repo")
     for index in range(2):
@@ -343,6 +396,67 @@ def test_claim_next_enforces_repository_worker_cap(client: TestClient) -> None:
     assert second.json()["reason_code"] == "blocked_by_capacity"
     assert summary.status_code == 200
     assert summary.json()["active_leases"] == 1
+
+
+def test_claim_next_reports_actionable_aggregate_blocker(client: TestClient) -> None:
+    active = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "aggregate-active"},
+        json={
+            **ready_work_item_payload("Active shared work"),
+            "priority": 0,
+            "conflict_keys": ["shared:left-lane"],
+        },
+    )
+    assert active.status_code == 200
+    active_id = str(active.json()["id"])
+    claimed = client.post(
+        f"/work-items/{active_id}/claim",
+        headers={"Idempotency-Key": "aggregate-active-claim"},
+        json={"owner": "slot-active"},
+    )
+    assert claimed.status_code == 200
+    root = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "aggregate-root"},
+        json={"title": "Unfinished root", "status": "backlog", "priority": 1},
+    )
+    assert root.status_code == 200
+    root_id = str(root.json()["id"])
+    dependent = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "aggregate-dependent"},
+        json={
+            **ready_work_item_payload("Dependency blocked"),
+            "priority": 2,
+            "dependency_ids": [root_id],
+            "conflict_keys": ["independent:dependency"],
+        },
+    )
+    assert dependent.status_code == 200
+    conflict = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "aggregate-conflict"},
+        json={
+            **ready_work_item_payload("Conflict blocked"),
+            "priority": 3,
+            "conflict_keys": ["shared:left-lane"],
+        },
+    )
+    assert conflict.status_code == 200
+
+    response = client.post(
+        "/queue/claim-next",
+        headers={"Idempotency-Key": "aggregate-claim-next"},
+        json={"owner": "slot-next"},
+    )
+
+    assert response.status_code == 409
+    payload = response.json()
+    assert payload["reason_code"] == "blocked_by_dependency"
+    assert payload["details"]["blocked_counts"]["blocked_by_dependency"] == 1
+    assert payload["details"]["blocked_counts"]["blocked_by_conflict_key"] == 1
+    assert payload["details"]["blocked_counts"]["blocked_by_status"] >= 1
 
 
 def test_repository_scoped_scheduler_rejects_unknown_repository(
@@ -572,6 +686,47 @@ def test_repository_sync_uses_github_adapter(
     assert response.json()["issues_seen"] == 1
     assert response.json()["work_items_created"] == 1
     assert client.get("/work-items").json()[0]["repository_id"] == repository_id
+
+
+def test_repository_sync_accepts_json_issue_filter_options(
+    session_factory: sessionmaker[Session],
+) -> None:
+    github_client = FakeGitHubClient()
+    app = create_app(
+        Settings(app_name="Kairota Test", database_url="sqlite:///test.sqlite"),
+        session_factory=session_factory,
+        github_client=github_client,
+    )
+    client = TestClient(app)
+    with session_factory() as session, session.begin():
+        repository = Repository(
+            provider=RepositoryProvider.GITHUB.value,
+            provider_repo_id="repo-1",
+            name="owner/repo",
+            default_branch="main",
+            sync_status="unknown",
+        )
+        session.add(repository)
+        session.flush()
+        repository_id = repository.id
+
+    response = client.post(
+        f"/repositories/{repository_id}/sync",
+        headers={"Idempotency-Key": "api-sync-issue-options"},
+        json={
+            "mode": "issues",
+            "issue_state": "open",
+            "labels": ["kairota"],
+            "max_pages": 1,
+        },
+    )
+
+    assert response.status_code == 200
+    assert github_client.options[0] is not None
+    assert github_client.options[0].mode == RepositorySyncMode.ISSUES
+    assert github_client.options[0].issue_state == RepositoryIssueState.OPEN
+    assert github_client.options[0].labels == ("kairota",)
+    assert github_client.options[0].max_pages == 1
 
 
 def test_github_webhook_route_verifies_signature(

@@ -83,6 +83,22 @@ export type QueueWorkbench = {
   recovery_signals: QueueWorkbenchRecoverySignal[];
 };
 
+export type Repository = {
+  id: string;
+  provider: string;
+  provider_repo_id: string;
+  name: string;
+  default_branch: string;
+  sync_status: string;
+};
+
+export type RuntimeHealth = {
+  status: string;
+  service: string;
+  version: string;
+  database_identity: string;
+};
+
 export const sectionTones: Record<SectionId, Tone> = {
   ready: "green",
   running: "blue",

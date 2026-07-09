@@ -100,6 +100,23 @@ blocked, 0 waiting, 0 failed, and 3 done. The selected C02 item showed
 `ready_for_claim` and displayed A02 and B01 dependencies as `done`. Browser
 console checks showed no fetch or rendering errors.
 
+## 2026-07-09 External Repository Migration Findings
+
+A separate managed-project migration test against an active repository found
+adoption blockers that are now covered by product changes and tests:
+
+- Initial onboarding can use bounded `mode=issues` sync with issue filters, so
+  large repositories do not need full PR/check enrichment before scheduling.
+- Worker-run close with result `done` can complete non-PR work under the active
+  lease and fencing token.
+- CLI `work-items create --status` advertises only safe initial statuses.
+- The web workbench displays the actual API base, service health, opaque
+  database identity, and latest refresh state.
+- Ready-status work with unmet dependencies or active conflict locks appears
+  with blocker-specific actions instead of looking claimable.
+- `claim-next` blocked responses include prioritized aggregate blocker counts.
+- Triage updates are patch-like, so omitted scheduling facts are preserved.
+
 ## Remaining Gaps
 
 Webhook delivery from GitHub can be unit-tested with signed payloads, but true

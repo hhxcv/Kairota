@@ -15,16 +15,20 @@ from kairota.adapters.github.models import (
     GitHubRepositoryConfig,
     GitHubRepositorySnapshot,
     GitHubReviewSnapshot,
+    GitHubSyncOptions,
     GitHubSyncSnapshot,
 )
 from kairota.contracts.enums import (
     CheckConclusion,
     CheckStatus,
     PullRequestState,
+    RepositoryIssueState,
     RepositoryProvider,
+    RepositorySyncMode,
     ReviewGateState,
     WorkItemStatus,
 )
+from kairota.contracts.schemas import RepositorySyncCommand
 from kairota.models.records import (
     ExternalRef,
     RepoCheckSummary,
@@ -41,14 +45,17 @@ class FakeGitHubClient:
     def __init__(self, *snapshots: GitHubSyncSnapshot) -> None:
         self.snapshots = list(snapshots)
         self.calls: list[GitHubRepositoryConfig] = []
+        self.options: list[GitHubSyncOptions | None] = []
 
     def fetch_repository_snapshot(
         self,
         repository: GitHubRepositoryConfig,
         cursor: str | None = None,
+        options: GitHubSyncOptions | None = None,
     ) -> GitHubSyncSnapshot:
         del cursor
         self.calls.append(repository)
+        self.options.append(options)
         if len(self.calls) <= len(self.snapshots):
             return self.snapshots[len(self.calls) - 1]
         return self.snapshots[-1]
@@ -235,6 +242,36 @@ def test_poll_sync_creates_issue_work_item_and_replays_idempotently(
         assert session.scalar(select(WorkItem.repository_id)) == repository.id
 
 
+def test_poll_sync_passes_bounded_issue_options_to_adapter(engine: Engine) -> None:
+    snapshot = sync_snapshot(issues=(issue(),))
+    fake_client = FakeGitHubClient(snapshot)
+
+    with Session(engine) as session, session.begin():
+        repository = create_repository(session)
+        result = sync_repository_command(
+            session,
+            repository_id=repository.id,
+            idempotency_key="sync-issue-options",
+            client=fake_client,
+            command=RepositorySyncCommand(
+                mode=RepositorySyncMode.ISSUES,
+                issue_state=RepositoryIssueState.OPEN,
+                labels=("kairota",),
+                issue_numbers=(7,),
+                max_pages=1,
+            ),
+        )
+
+        assert result.issues_seen == 1
+        options = fake_client.options[0]
+        assert options is not None
+        assert options.mode == RepositorySyncMode.ISSUES
+        assert options.issue_state == RepositoryIssueState.OPEN
+        assert options.labels == ("kairota",)
+        assert options.issue_numbers == (7,)
+        assert options.max_pages == 1
+
+
 def test_issue_close_marks_work_item_done(engine: Engine) -> None:
     snapshot = sync_snapshot(issues=(issue(state="closed"),))
     client: GitHubClient = FakeGitHubClient(snapshot)
@@ -250,6 +287,42 @@ def test_issue_close_marks_work_item_done(engine: Engine) -> None:
 
         assert result.transitions_applied == 1
         assert session.scalar(select(WorkItem.status)) == WorkItemStatus.DONE.value
+
+
+def test_open_issue_sync_refreshes_tracked_active_issue_state(engine: Engine) -> None:
+    fake_client = FakeGitHubClient(
+        sync_snapshot(issues=()),
+        sync_snapshot(issues=(issue(state="closed"),)),
+    )
+
+    with Session(engine) as session, session.begin():
+        repository = create_repository(session)
+        work_item = link_issue_work_item(
+            session,
+            repository,
+            status=WorkItemStatus.READY,
+        )
+        result = sync_repository_command(
+            session,
+            repository_id=repository.id,
+            idempotency_key="sync-open-refresh-tracked",
+            client=fake_client,
+            command=RepositorySyncCommand(
+                mode=RepositorySyncMode.ISSUES,
+                issue_state=RepositoryIssueState.OPEN,
+                max_pages=1,
+            ),
+        )
+
+        assert result.issues_seen == 1
+        assert result.transitions_applied == 1
+        assert status_for(session, work_item.id) == WorkItemStatus.DONE.value
+        assert len(fake_client.options) == 2
+        assert fake_client.options[0] is not None
+        assert fake_client.options[0].issue_state == RepositoryIssueState.OPEN
+        assert fake_client.options[1] is not None
+        assert fake_client.options[1].issue_state == RepositoryIssueState.ALL
+        assert fake_client.options[1].issue_numbers == (7,)
 
 
 def test_pull_request_open_and_successful_gates_move_to_merge_armed(

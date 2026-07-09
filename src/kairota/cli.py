@@ -25,6 +25,7 @@ from kairota.contracts.schemas import (
     ClaimWorkItemCommand,
     LeaseHeartbeatCommand,
     RepositoryCreate,
+    RepositorySyncCommand,
     SchedulerCycleCreate,
     WorkerRunCloseCommand,
     WorkerRunCreateCommand,
@@ -53,6 +54,7 @@ from kairota.services.scheduler_cycles import (
     run_scheduler_cycle_command,
 )
 from kairota.services.work_items import (
+    ALLOWED_CREATE_STATUSES,
     create_work_item_command,
     get_work_item,
     list_work_items,
@@ -160,6 +162,14 @@ def cmd_work_items_show(args: argparse.Namespace) -> int:
 
 
 def cmd_work_items_triage(args: argparse.Namespace) -> int:
+    conflict_keys = tuple(args.conflict_key) if args.conflict_key is not None else None
+    dependency_ids = (
+        tuple(args.dependency_id) if args.dependency_id is not None else None
+    )
+    if args.clear_conflict_keys:
+        conflict_keys = ()
+    if args.clear_dependencies:
+        dependency_ids = ()
     payload = WorkItemTriageCommand(
         status=args.status,
         priority=args.priority,
@@ -169,8 +179,8 @@ def cmd_work_items_triage(args: argparse.Namespace) -> int:
         acceptance=args.acceptance,
         validation=args.validation,
         expected_touch=args.expected_touch,
-        conflict_keys=tuple(args.conflict_key),
-        dependency_ids=tuple(args.dependency_id),
+        conflict_keys=conflict_keys,
+        dependency_ids=dependency_ids,
     )
     try:
         with session_scope() as session, session.begin():
@@ -274,7 +284,10 @@ def cmd_queue_claim_next(args: argparse.Namespace) -> int:
         print_blocked(
             str(result.reason or "no_schedulable_work"),
             result.explanation or "No schedulable work item was found.",
-            {"repository_id": args.repository_id},
+            {
+                "repository_id": args.repository_id,
+                "blocked_counts": result.blocked_counts,
+            },
         )
         return 2
     print_json(result.model_dump(mode="json"))
@@ -532,6 +545,14 @@ def cmd_repositories_show(args: argparse.Namespace) -> int:
 def cmd_sync_repository(args: argparse.Namespace) -> int:
     settings = get_settings()
     client = GitHubHttpClient.from_settings(settings)
+    command = RepositorySyncCommand(
+        mode=args.mode,
+        issue_state=args.issue_state,
+        labels=tuple(args.label),
+        issue_numbers=tuple(args.issue_number),
+        since=args.since,
+        max_pages=args.max_pages,
+    )
     try:
         with session_scope() as session, session.begin():
             result = sync_repository_command(
@@ -539,6 +560,7 @@ def cmd_sync_repository(args: argparse.Namespace) -> int:
                 repository_id=args.repository_id,
                 idempotency_key=args.idempotency_key,
                 client=client,
+                command=command,
             )
     except IdempotencyConflictError as exc:
         print_blocked("idempotency_conflict", str(exc))
@@ -619,7 +641,7 @@ def build_parser() -> argparse.ArgumentParser:
     work_item_create.add_argument("--repository-id")
     work_item_create.add_argument(
         "--status",
-        choices=[status.value for status in WorkItemStatus],
+        choices=sorted(ALLOWED_CREATE_STATUSES),
         default=WorkItemStatus.NEEDS_TRIAGE.value,
     )
     work_item_create.add_argument("--priority", type=int, default=100)
@@ -670,29 +692,27 @@ def build_parser() -> argparse.ArgumentParser:
             WorkItemStatus.BLOCKED.value,
             WorkItemStatus.HUMAN_DECISION.value,
         ],
-        default=WorkItemStatus.READY.value,
     )
-    work_item_triage.add_argument("--priority", type=int, default=100)
+    work_item_triage.add_argument("--priority", type=int)
     work_item_triage.add_argument(
         "--risk",
         choices=[risk.value for risk in RiskLevel],
-        default=RiskLevel.MEDIUM.value,
     )
     work_item_triage.add_argument(
         "--work-type",
         choices=[work_type.value for work_type in WorkType],
-        default=WorkType.IMPLEMENTATION.value,
     )
     work_item_triage.add_argument(
         "--autonomy-mode",
         choices=[mode.value for mode in AutonomyMode],
-        default=AutonomyMode.AI_ASSISTED.value,
     )
     work_item_triage.add_argument("--acceptance")
     work_item_triage.add_argument("--validation")
     work_item_triage.add_argument("--expected-touch")
-    work_item_triage.add_argument("--conflict-key", action="append", default=[])
-    work_item_triage.add_argument("--dependency-id", action="append", default=[])
+    work_item_triage.add_argument("--conflict-key", action="append")
+    work_item_triage.add_argument("--dependency-id", action="append")
+    work_item_triage.add_argument("--clear-conflict-keys", action="store_true")
+    work_item_triage.add_argument("--clear-dependencies", action="store_true")
     work_item_triage.set_defaults(func=cmd_work_items_triage)
 
     work_item_claim = work_item_subparsers.add_parser("claim", help="Claim work.")
@@ -872,6 +892,26 @@ def build_parser() -> argparse.ArgumentParser:
     )
     sync_repository.add_argument("repository_id")
     sync_repository.add_argument("--idempotency-key", required=True)
+    sync_repository.add_argument(
+        "--mode",
+        choices=["full", "issues"],
+        default="full",
+        help="Use issues for bounded issue-only onboarding sync.",
+    )
+    sync_repository.add_argument(
+        "--issue-state",
+        choices=["all", "open", "closed"],
+        default="all",
+    )
+    sync_repository.add_argument("--label", action="append", default=[])
+    sync_repository.add_argument(
+        "--issue-number",
+        action="append",
+        type=int,
+        default=[],
+    )
+    sync_repository.add_argument("--since")
+    sync_repository.add_argument("--max-pages", type=int)
     sync_repository.set_defaults(func=cmd_sync_repository)
 
     return parser

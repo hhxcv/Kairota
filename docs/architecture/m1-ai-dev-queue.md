@@ -1,6 +1,6 @@
 ---
 doc:
-  updated_at: 2026-07-08
+  updated_at: 2026-07-09
   category: architecture
   status: mixed-current-planned
   audience: ai
@@ -116,8 +116,9 @@ M1 is done when a single local operator can:
   <https://docs.github.com/rest/checks>
 - GitHub commit statuses can also affect pull request status:
   <https://docs.github.com/en/rest/commits/statuses>
-- GitHub GraphQL exposes pull request review thread state needed for review gates:
-  <https://docs.github.com/en/graphql/reference/pulls>
+- GitHub issue and pull request comments provide the current review-discussion
+  channel for this project:
+  <https://docs.github.com/rest/issues/comments>
 - Temporal provides durable execution for crash-proof workflows, but it is deferred
   until Kairota has long-running workflow needs that exceed a Postgres outbox:
   <https://docs.temporal.io/>
@@ -234,7 +235,8 @@ Initial subscribed or polled GitHub facts:
 - issues and issue comments for source requirements and human decisions;
 - pull requests for branch, draft, head SHA, state, mergeability, and merge state;
 - check runs, check suites, and commit statuses for current head SHA gates;
-- reviews and review threads for approval and unresolved-thread gates.
+- issue or pull request comments for comment-derived review facts when a managed
+  project defines a review-comment convention.
 
 Each normalized repository summary should include:
 
@@ -266,21 +268,21 @@ Initial rules:
 | --- | --- |
 | New linked issue | Create or link a work item in `Needs Triage` or `Backlog`; do not infer scheduling fields without Kairota triage. |
 | Issue edited | Update source summary and audit; do not overwrite Kairota priority, risk, dependencies, expected touch, conflict keys, acceptance, or validation. |
-| Issue closed without merged linked PR | Move to `Human Decision` unless a Kairota close command already explains the closure. |
+| Issue closed | Move linked work item to `Done`; this is the dependency satisfaction signal for synced issue work. |
 | PR opened or synchronized | Link PR summary, set or retain PR-derived locks, and move eligible implemented work toward `PR Open`. |
 | PR draft | Keep the work out of `Merge Armed`; surface as waiting or blocked by draft state. |
-| PR head SHA changes | Mark older check and review summaries stale for gate purposes. |
+| PR head SHA changes | Mark older check and comment-derived review summaries stale for gate purposes. |
 | Required current-head checks pending | Surface as `Waiting Checks`; do not fail the work item. |
 | Required current-head checks fail | Move or surface as `CI Failed` with check reason codes. |
-| Review approval missing | Surface as waiting review when checks are otherwise acceptable. |
-| Requested changes or unresolved review threads | Move or surface as `Strict AI Review` or `Gate Failed`. |
+| Review approval missing | Surface as waiting review only when a managed project has defined a comment-derived review convention. |
+| Commented review blockers | Move or surface as `Strict AI Review` or `Gate Failed` when converted into Kairota review summaries. |
 | Required checks pass and review gate passes | Move eligible PR work to `Merge Armed`. |
 | PR merged | Move to `Merged`; release locks only after worker-run close or reconciliation audit. |
 | PR closed unmerged | Move to `Human Decision` unless reconciliation proves no public mutation remains and the work can safely return to `Ready`. |
 
-The reducer should never treat an issue close as `Done`. `Done` requires Kairota
-completion evidence: merged or intentionally closed work, worker-run closure,
-validation evidence, and lease or lock cleanup.
+For synced GitHub issue work, issue close is the core completion signal. PR,
+review, CI, validation, and worker-run records remain useful management and
+audit context, but they do not satisfy dependencies by themselves.
 
 ## Ordering, Freshness, And Repair
 
@@ -292,9 +294,10 @@ Rules:
 
 - Idempotency key collisions with different payload hashes are sync errors.
 - Older observed events cannot downgrade newer repository summaries.
-- Check and review gates are evaluated only for the current PR head SHA.
-- Unknown required checks or unknown review-thread state produce `Human Decision`
-  or `Strict AI Review`, not `Merge Armed`.
+- Check and review management summaries are evaluated only for the current PR
+  head SHA.
+- Unknown required checks or unknown required comment-review state produce
+  `Human Decision` or `Strict AI Review`, not `Merge Armed`.
 - Failed normalizers leave failed inbound events visible for repair.
 - Reconciliation can rebuild repository summaries, sync cursors, and derived PR
   locks from provider snapshots.
@@ -332,8 +335,8 @@ Stable ordering:
 Each cycle should:
 
 1. lock the persisted scheduler guard row for the queue;
-2. load worker capacity, active leases, active locks, open or merge-armed PR
-   locks, dependencies, and candidate work items;
+2. load worker capacity, active leases, active locks, dependencies, and
+   candidate work items;
 3. evaluate candidates in stable order;
 4. record one scheduler decision for each assigned or rejected candidate;
 5. create leases and lock holders for assigned work in the same transaction;
@@ -346,13 +349,10 @@ Reason codes should be machine-readable. Initial codes:
 - `blocked_by_status`
 - `blocked_by_conflict_key`
 - `blocked_by_capacity`
-- `blocked_by_missing_expected_touch`
-- `blocked_by_missing_acceptance`
-- `blocked_by_missing_validation`
-- `blocked_by_review_gate`
-- `blocked_by_ci`
-- `blocked_by_human_decision`
-- `blocked_by_expired_or_stale_source`
+
+Expected touch, acceptance, validation, CI, review, and PR gate data are
+management facts. They may appear in UI or reporting reason codes, but the
+scheduler does not require them for assignment.
 
 ## Claim, Lease, And Lock Rules
 
@@ -423,7 +423,7 @@ Initial reads:
 - issues as source links and requirements;
 - pull requests as repository summaries linked to work items;
 - check runs, check suites, and commit statuses as check summaries;
-- reviews and review threads as review-gate summaries;
+- comment-derived review facts as review-gate summaries;
 - labels only when mapped through Kairota-owned fields.
 
 Initial writes:
@@ -627,7 +627,7 @@ Validate:
 Deliver:
 
 - adapter interface;
-- GitHub issue, PR, check, status, review, and review-thread normalizers;
+- GitHub issue, issue-comment, PR, check, status, and review-summary normalizers;
 - polling sync for one configured repository;
 - webhook receiver with signature verification when configured;
 - inbound event idempotency.
@@ -640,7 +640,7 @@ Validate:
 - webhook signature tests;
 - sync replay idempotency tests;
 - reducer tests for issue close, PR open, PR synchronize, failed checks, stale
-  checks, requested changes, unresolved threads, merged PR, and unmerged PR close;
+  checks, comment-derived requested changes, merged PR, and unmerged PR close;
 - reconciliation tests for missed, duplicated, failed, and out-of-order events;
 - privacy checks for stored payload summaries.
 

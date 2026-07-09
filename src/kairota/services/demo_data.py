@@ -135,7 +135,7 @@ DEMO_WORK_ITEMS: tuple[DemoWorkItem, ...] = (
         "work_type": WorkType.TEST,
         "autonomy_mode": AutonomyMode.AI_ASSISTED,
         "expected_touch": "tests/test_github_sync.py",
-        "acceptance": "Unresolved review thread blocks merge arming.",
+        "acceptance": "Review blockers prevent merge arming.",
         "validation": "Review gate tests.",
         "conflict_keys": ("adapter:github",),
         "dependency_ids": (),

@@ -14,7 +14,6 @@ from kairota.adapters.github.normalizers import (
     normalize_issue,
     normalize_pull_request,
     normalize_repository,
-    normalize_review_summary,
 )
 
 JsonObject = dict[str, Any]
@@ -67,7 +66,6 @@ def normalize_webhook_event(
     issues = []
     pull_requests = []
     checks = []
-    reviews = []
 
     if event_type == "issues":
         issue_payload = object_payload(document, "issue")
@@ -85,32 +83,12 @@ def normalize_webhook_event(
         external_id = optional_str(check_payload.get("id"))
         if check is not None:
             checks.append(check)
-    elif event_type == "pull_request_review":
-        pr_payload = object_payload(document, "pull_request")
-        review_payload = object_payload(document, "review")
-        pull_request = normalize_pull_request(pr_payload)
-        pull_requests.append(pull_request)
-        reviews.append(
-            normalize_review_summary(
-                pull_request.number,
-                reviews=(review_payload,),
-                head_sha_value=pull_request.head_sha,
-            )
-        )
-        external_id = optional_str(review_payload.get("id"))
-    elif event_type == "pull_request_review_thread":
-        pr_payload = object_payload(document, "pull_request")
-        thread_payload = object_payload(document, "thread")
-        pull_request = normalize_pull_request(pr_payload)
-        pull_requests.append(pull_request)
-        reviews.append(
-            normalize_review_summary(
-                pull_request.number,
-                review_threads=(thread_payload,),
-                head_sha_value=pull_request.head_sha,
-            )
-        )
-        external_id = optional_str(thread_payload.get("id"))
+    elif event_type == "issue_comment":
+        issue_payload = object_payload(document, "issue")
+        comment_payload = object_payload(document, "comment")
+        external_id = optional_str(comment_payload.get("id"))
+        if "pull_request" not in issue_payload:
+            issues.append(normalize_issue(issue_payload))
     elif event_type == "status":
         external_id = optional_str(document.get("id") or document.get("sha"))
     else:
@@ -121,7 +99,7 @@ def normalize_webhook_event(
         issues=tuple(issues),
         pull_requests=tuple(pull_requests),
         checks=tuple(checks),
-        reviews=tuple(reviews),
+        reviews=(),
     )
     return GitHubWebhookEvent(
         event_type=event_type,

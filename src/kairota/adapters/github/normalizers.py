@@ -108,16 +108,10 @@ def normalize_review_summary(
     pull_request_number: int,
     *,
     reviews: tuple[JsonObject, ...] = (),
-    review_threads: tuple[JsonObject, ...] = (),
     head_sha_value: str | None = None,
 ) -> GitHubReviewSnapshot:
-    unresolved_count = sum(
-        1 for thread in review_threads if not bool(thread.get("isResolved"))
-    )
     states = [str(review.get("state") or "").upper() for review in reviews]
-    if unresolved_count > 0:
-        state = ReviewGateState.UNRESOLVED_THREADS
-    elif "CHANGES_REQUESTED" in states:
+    if "CHANGES_REQUESTED" in states:
         state = ReviewGateState.CHANGES_REQUESTED
     elif "APPROVED" in states:
         state = ReviewGateState.APPROVED
@@ -129,11 +123,11 @@ def normalize_review_summary(
     return GitHubReviewSnapshot(
         pull_request_number=pull_request_number,
         state=state,
-        unresolved_count=unresolved_count,
+        unresolved_count=0,
         head_sha=head_sha_value,
         summary={
             "review_count": len(reviews),
-            "thread_count": len(review_threads),
+            "thread_count": 0,
         },
     )
 

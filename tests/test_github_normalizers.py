@@ -56,14 +56,13 @@ def test_check_and_status_normalizers_map_gate_state() -> None:
     assert status.conclusion == CheckConclusion.UNKNOWN
 
 
-def test_review_normalizer_prefers_unresolved_threads() -> None:
+def test_review_normalizer_maps_native_review_payload_when_supplied() -> None:
     review = normalize_review_summary(
         5,
-        reviews=({"state": "APPROVED"},),
-        review_threads=({"id": "thread-1", "isResolved": False},),
+        reviews=({"state": "CHANGES_REQUESTED"},),
         head_sha_value="abc123",
     )
 
-    assert review.state == ReviewGateState.UNRESOLVED_THREADS
-    assert review.unresolved_count == 1
-    assert review.summary == {"review_count": 1, "thread_count": 1}
+    assert review.state == ReviewGateState.CHANGES_REQUESTED
+    assert review.unresolved_count == 0
+    assert review.summary == {"review_count": 1, "thread_count": 0}

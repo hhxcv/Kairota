@@ -19,8 +19,8 @@ from kairota.adapters.github.models import (
 )
 from kairota.api.app import create_app
 from kairota.config import Settings
-from kairota.contracts.enums import RepositoryProvider
-from kairota.models.records import Repository
+from kairota.contracts.enums import RepositoryProvider, WorkItemStatus
+from kairota.models.records import Repository, WorkItem
 
 
 class FakeGitHubClient:
@@ -49,7 +49,7 @@ class FakeGitHubClient:
 
 
 def test_healthz_returns_runtime_identity() -> None:
-    app = create_app(Settings(app_name="Kairota Test"))
+    app = create_app(Settings(app_name="Kairota Test", auto_migrate=False))
     response = TestClient(app).get("/healthz")
 
     assert response.status_code == 200
@@ -58,6 +58,39 @@ def test_healthz_returns_runtime_identity() -> None:
         "service": "Kairota Test",
         "version": "0.1.0",
     }
+
+
+def test_local_web_origin_is_allowed_by_cors() -> None:
+    app = create_app(Settings(app_name="Kairota Test", auto_migrate=False))
+    response = TestClient(app).get(
+        "/healthz",
+        headers={"Origin": "http://127.0.0.1:5183"},
+    )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5183"
+
+
+def test_app_manages_default_database_without_explicit_url(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("KAIROTA_DATABASE_URL", raising=False)
+    monkeypatch.setenv("KAIROTA_DATA_DIR", str(tmp_path))
+    app = create_app(
+        Settings(app_name="Kairota Test"),
+        github_client=FakeGitHubClient(),
+    )
+    client = TestClient(app)
+
+    response = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "default-db-create"},
+        json={"title": "Default database work"},
+    )
+
+    assert response.status_code == 200
+    assert (tmp_path / "kairota.sqlite").exists()
 
 
 @pytest.fixture()
@@ -269,6 +302,49 @@ def test_triage_and_claim_next_are_repository_scoped(client: TestClient) -> None
     assert unscoped_status == "ready"
 
 
+def test_claim_next_enforces_repository_worker_cap(client: TestClient) -> None:
+    repository_id = register_repository(client, "register-capped-repo")
+    for index in range(2):
+        response = client.post(
+            "/work-items",
+            headers={"Idempotency-Key": f"capped-ready-{index}"},
+            json={
+                **ready_work_item_payload(f"Capped work {index}"),
+                "repository_id": repository_id,
+                "priority": index,
+                "conflict_keys": [f"repo:owner/repo:path:slot-{index}"],
+            },
+        )
+        assert response.status_code == 200
+
+    first = client.post(
+        "/queue/claim-next",
+        headers={"Idempotency-Key": "capped-claim-1"},
+        json={
+            "owner": "repo-worker-1",
+            "repository_id": repository_id,
+            "max_active_leases": 1,
+        },
+    )
+    second = client.post(
+        "/queue/claim-next",
+        headers={"Idempotency-Key": "capped-claim-2"},
+        json={
+            "owner": "repo-worker-2",
+            "repository_id": repository_id,
+            "max_active_leases": 1,
+        },
+    )
+    summary = client.get(f"/queue/summary?repository_id={repository_id}")
+
+    assert first.status_code == 200
+    assert first.json()["claimed"] is True
+    assert second.status_code == 409
+    assert second.json()["reason_code"] == "blocked_by_capacity"
+    assert summary.status_code == 200
+    assert summary.json()["active_leases"] == 1
+
+
 def test_repository_scoped_scheduler_rejects_unknown_repository(
     client: TestClient,
 ) -> None:
@@ -303,6 +379,69 @@ def test_scheduler_cycle_records_decisions(client: TestClient) -> None:
     assert payload["assigned_count"] == 1
     assert payload["decisions"][0]["work_item_id"] == work_item_id
     assert payload["decisions"][0]["code"] == "assigned"
+
+
+def test_dependencies_are_satisfied_by_done_not_merged(
+    client: TestClient,
+    session_factory: sessionmaker[Session],
+) -> None:
+    root = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "dependency-root"},
+        json={
+            **ready_work_item_payload("Root dependency"),
+            "conflict_keys": ["root:dependency"],
+        },
+    )
+    assert root.status_code == 200
+    root_id = str(root.json()["id"])
+    dependent = client.post(
+        "/work-items",
+        headers={"Idempotency-Key": "dependency-child"},
+        json={
+            **ready_work_item_payload("Dependent work"),
+            "dependency_ids": [root_id],
+            "conflict_keys": ["dependent:work"],
+        },
+    )
+    assert dependent.status_code == 200
+    dependent_id = str(dependent.json()["id"])
+
+    with session_factory() as session, session.begin():
+        root_record = session.get(WorkItem, root_id)
+        assert root_record is not None
+        root_record.status = WorkItemStatus.MERGED.value
+
+    merged_plan = client.post(
+        "/scheduler/cycles",
+        headers={"Idempotency-Key": "dependency-merged-plan"},
+        json={"capacity": 2},
+    )
+    assert merged_plan.status_code == 200
+    merged_decisions = {
+        decision["work_item_id"]: decision["code"]
+        for decision in merged_plan.json()["decisions"]
+    }
+    assert merged_decisions[root_id] == "blocked_by_status"
+    assert merged_decisions[dependent_id] == "blocked_by_dependency"
+
+    with session_factory() as session, session.begin():
+        root_record = session.get(WorkItem, root_id)
+        assert root_record is not None
+        root_record.status = WorkItemStatus.DONE.value
+
+    done_plan = client.post(
+        "/scheduler/cycles",
+        headers={"Idempotency-Key": "dependency-done-plan"},
+        json={"capacity": 2},
+    )
+    assert done_plan.status_code == 200
+    done_decisions = {
+        decision["work_item_id"]: decision["code"]
+        for decision in done_plan.json()["decisions"]
+    }
+    assert done_decisions[root_id] == "blocked_by_status"
+    assert done_decisions[dependent_id] == "assigned"
 
 
 def test_claim_blocked_response_is_machine_readable(client: TestClient) -> None:

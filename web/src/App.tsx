@@ -80,11 +80,31 @@ export function App() {
   }, [loadWorkbench]);
 
   const rows = useMemo(() => allRows(workbench), [workbench]);
+  const rowsById = useMemo(
+    () => new Map(rows.map((row) => [row.id, row])),
+    [rows],
+  );
+  const navSections = useMemo(
+    () => filterSections(workbench.sections, allSections, query),
+    [query, workbench.sections],
+  );
   const filteredSections = useMemo(
     () => filterSections(workbench.sections, activeSection, query),
     [activeSection, query, workbench.sections],
   );
-  const selectedRow = rows.find((row) => row.id === selectedRowId) ?? rows[0] ?? null;
+  const navRows = useMemo(() => rowsFromSections(navSections), [navSections]);
+  const visibleRows = useMemo(
+    () => rowsFromSections(filteredSections),
+    [filteredSections],
+  );
+  const decisionRows = useMemo(
+    () => filterRows(workbench.decision_inbox, query),
+    [query, workbench.decision_inbox],
+  );
+  const selectedRow =
+    visibleRows.find((row) => row.id === selectedRowId) ?? visibleRows[0] ?? null;
+  const totalSuffix =
+    visibleRows.length === rows.length ? "" : ` (${rows.length} total)`;
 
   return (
     <main className="app-shell">
@@ -99,11 +119,11 @@ export function App() {
         <nav className="section-nav" aria-label="Queue sections">
           <NavButton
             active={activeSection === allSections}
-            count={workbench.summary.total}
+            count={navRows.length}
             label="All"
             onClick={() => setActiveSection(allSections)}
           />
-          {workbench.sections.map((section) => (
+          {navSections.map((section) => (
             <NavButton
               active={activeSection === section.id}
               count={section.count}
@@ -121,8 +141,8 @@ export function App() {
           <div>
             <h1>AI Dev Queue</h1>
             <p className="bar-copy">
-              {source === "api" ? "Local API" : "No API data"} - {rows.length} visible
-              work items
+              {source === "api" ? "Local API" : "No API data"} -{" "}
+              {visibleRows.length} visible work items{totalSuffix}
             </p>
           </div>
           <div className="command-actions">
@@ -148,9 +168,10 @@ export function App() {
         </header>
 
         <SummaryStrip
-          decisionCount={workbench.decision_inbox.length}
+          decisionCount={decisionRows.length}
           failureCount={workbench.failures.length}
           summary={workbench.summary}
+          visibleCount={visibleRows.length}
         />
 
         {loadError ? (
@@ -172,10 +193,14 @@ export function App() {
           </section>
 
           <aside className="detail-rail" aria-label="Work item details">
-            {selectedRow ? <DetailPanel row={selectedRow} /> : <EmptyDetail />}
+            {selectedRow ? (
+              <DetailPanel row={selectedRow} rowsById={rowsById} />
+            ) : (
+              <EmptyDetail />
+            )}
             <DecisionInbox
               onSelect={setSelectedRowId}
-              rows={workbench.decision_inbox}
+              rows={decisionRows}
               selectedRowId={selectedRow?.id ?? ""}
             />
             <RecoverySignals signals={workbench.recovery_signals} />
@@ -192,13 +217,15 @@ function SummaryStrip({
   decisionCount,
   failureCount,
   summary,
+  visibleCount,
 }: {
   decisionCount: number;
   failureCount: number;
   summary: QueueWorkbench["summary"];
+  visibleCount: number;
 }) {
   const metrics = [
-    ["Total", summary.total],
+    ["Visible", visibleCount],
     ["Active leases", summary.active_leases],
     ["Active locks", summary.active_locks],
     ["Decisions", decisionCount],
@@ -307,7 +334,13 @@ function WorkRow({
   );
 }
 
-function DetailPanel({ row }: { row: QueueWorkbenchRow }) {
+function DetailPanel({
+  row,
+  rowsById,
+}: {
+  row: QueueWorkbenchRow;
+  rowsById: Map<string, QueueWorkbenchRow>;
+}) {
   const repository = row.repository;
   return (
     <section className="detail-panel" aria-label="Selected work item">
@@ -327,7 +360,7 @@ function DetailPanel({ row }: { row: QueueWorkbenchRow }) {
       <DetailText label="Acceptance" value={row.acceptance ?? "not set"} />
       <DetailText label="Validation" value={row.validation ?? "not set"} />
       <TagGroup label="Conflicts" values={row.conflict_keys} />
-      <TagGroup label="Dependencies" values={row.dependency_ids} />
+      <DependencyGroup dependencyIds={row.dependency_ids} rowsById={rowsById} />
       {row.worker_run ? <WorkerRunSummary run={row.worker_run} /> : null}
       {Object.keys(repository).length > 0 ? (
         <RepositorySummary repository={repository} />
@@ -367,6 +400,20 @@ function TagGroup({ label, values }: { label: string; values: string[] }) {
       </div>
     </div>
   );
+}
+
+function DependencyGroup({
+  dependencyIds,
+  rowsById,
+}: {
+  dependencyIds: string[];
+  rowsById: Map<string, QueueWorkbenchRow>;
+}) {
+  const values = dependencyIds.map((dependencyId) => {
+    const row = rowsById.get(dependencyId);
+    return row ? `${row.title} - ${row.status}` : dependencyId;
+  });
+  return <TagGroup label="Dependencies" values={values} />;
 }
 
 function WorkerRunSummary({ run }: { run: NonNullable<QueueWorkbenchRow["worker_run"]> }) {
@@ -518,6 +565,18 @@ function EmptyDetail() {
   );
 }
 
+function rowsFromSections(sections: QueueWorkbenchSection[]): QueueWorkbenchRow[] {
+  return sections.flatMap((section) => section.rows);
+}
+
+function filterRows(rows: QueueWorkbenchRow[], query: string): QueueWorkbenchRow[] {
+  const normalizedQuery = query.trim().toLowerCase();
+  if (!normalizedQuery) {
+    return rows;
+  }
+  return rows.filter((row) => matchesRow(row, normalizedQuery));
+}
+
 function filterSections(
   sections: QueueWorkbenchSection[],
   activeSection: SectionId | typeof allSections,
@@ -528,21 +587,23 @@ function filterSections(
     .filter((section) => activeSection === allSections || section.id === activeSection)
     .map((section) => {
       const rows = normalizedQuery
-        ? section.rows.filter((row) =>
-            [
-              row.title,
-              row.status,
-              row.reason_code,
-              row.next_action,
-              row.expected_touch ?? "",
-            ]
-              .join(" ")
-              .toLowerCase()
-              .includes(normalizedQuery),
-          )
+        ? section.rows.filter((row) => matchesRow(row, normalizedQuery))
         : section.rows;
       return { ...section, count: rows.length, rows };
     });
+}
+
+function matchesRow(row: QueueWorkbenchRow, normalizedQuery: string): boolean {
+  return [
+    row.title,
+    row.status,
+    row.reason_code,
+    row.next_action,
+    row.expected_touch ?? "",
+  ]
+    .join(" ")
+    .toLowerCase()
+    .includes(normalizedQuery);
 }
 
 function formatDate(value: string | null): string {

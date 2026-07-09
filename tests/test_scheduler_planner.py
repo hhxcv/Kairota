@@ -14,9 +14,6 @@ def candidate(
     priority: int = 100,
     risk: RiskLevel = RiskLevel.MEDIUM,
     created_order: int = 0,
-    expected_touch: str | None = "src/**",
-    acceptance: str | None = "done criteria",
-    validation: str | None = "pytest",
     conflict_keys: frozenset[str] = frozenset({"repo:kairota:path:src/**"}),
     dependency_ids: frozenset[str] = frozenset(),
 ) -> WorkItemPlanInput:
@@ -26,9 +23,6 @@ def candidate(
         priority=priority,
         risk=risk,
         created_order=created_order,
-        expected_touch=expected_touch,
-        acceptance=acceptance,
-        validation=validation,
         conflict_keys=conflict_keys,
         dependency_ids=dependency_ids,
     )
@@ -82,23 +76,31 @@ def test_planner_is_deterministic_for_same_inputs() -> None:
     assert plan_scheduler_cycle(plan_input) == plan_scheduler_cycle(plan_input)
 
 
-def test_planner_blocks_missing_required_triage_facts() -> None:
+def test_planner_does_not_require_management_metadata() -> None:
     plan = plan_scheduler_cycle(
         SchedulerPlanInput(
             candidates=(
-                candidate("touch", expected_touch=" ", created_order=1),
-                candidate("acceptance", acceptance=None, created_order=2),
-                candidate("validation", validation="", created_order=3),
+                candidate(
+                    "touch",
+                    created_order=1,
+                    conflict_keys=frozenset({"meta:touch"}),
+                ),
+                candidate(
+                    "acceptance",
+                    created_order=2,
+                    conflict_keys=frozenset({"meta:acceptance"}),
+                ),
+                candidate(
+                    "validation",
+                    created_order=3,
+                    conflict_keys=frozenset({"meta:validation"}),
+                ),
             ),
             capacity=3,
         )
     )
 
-    assert [decision.code for decision in plan.decisions] == [
-        SchedulerDecisionCode.BLOCKED_BY_MISSING_EXPECTED_TOUCH,
-        SchedulerDecisionCode.BLOCKED_BY_MISSING_ACCEPTANCE,
-        SchedulerDecisionCode.BLOCKED_BY_MISSING_VALIDATION,
-    ]
+    assert plan.assigned_work_item_ids == ("touch", "acceptance", "validation")
 
 
 def test_planner_blocks_status_dependencies_capacity_and_conflicts() -> None:

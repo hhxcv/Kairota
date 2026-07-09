@@ -56,6 +56,34 @@ def issue_webhook_payload(title: str = "Imported issue") -> bytes:
     ).encode("utf-8")
 
 
+def issue_comment_webhook_payload(*, pull_request: bool = False) -> bytes:
+    issue = {
+        "id": 456,
+        "number": 7,
+        "title": "PR conversation" if pull_request else "Issue conversation",
+        "html_url": "https://example.test/issues/7",
+        "state": "open",
+    }
+    if pull_request:
+        issue["pull_request"] = {"html_url": "https://example.test/pull/7"}
+    return json.dumps(
+        {
+            "action": "created",
+            "repository": {
+                "id": 123,
+                "full_name": "owner/repo",
+                "default_branch": "main",
+            },
+            "issue": issue,
+            "comment": {
+                "id": 789,
+                "html_url": "https://example.test/issues/7#issuecomment-789",
+            },
+        },
+        sort_keys=True,
+    ).encode("utf-8")
+
+
 def test_webhook_signature_uses_hmac_sha256() -> None:
     payload = issue_webhook_payload()
     digest = hmac.new(b"secret", payload, hashlib.sha256).hexdigest()
@@ -94,6 +122,56 @@ def test_webhook_processing_is_idempotent_and_does_not_store_payload(
         assert inbound is not None
         assert inbound.payload_hash == payload_sha256(payload)
         assert "Imported issue" not in inbound.payload_hash
+
+
+def test_issue_comment_webhook_normalizes_issue_context() -> None:
+    event = normalize_webhook_event(
+        event_type="issue_comment",
+        delivery_id="delivery-comment",
+        payload=issue_comment_webhook_payload(),
+    )
+
+    assert event.external_id == "789"
+    assert event.snapshot.issues[0].number == 7
+    assert event.snapshot.reviews == ()
+
+
+def test_pull_request_issue_comment_does_not_create_issue_snapshot() -> None:
+    event = normalize_webhook_event(
+        event_type="issue_comment",
+        delivery_id="delivery-pr-comment",
+        payload=issue_comment_webhook_payload(pull_request=True),
+    )
+
+    assert event.external_id == "789"
+    assert event.snapshot.issues == ()
+    assert event.snapshot.reviews == ()
+
+
+def test_native_github_review_webhooks_are_not_supported() -> None:
+    payload = json.dumps(
+        {
+            "action": "submitted",
+            "repository": {
+                "id": 123,
+                "full_name": "owner/repo",
+                "default_branch": "main",
+            },
+        }
+    ).encode("utf-8")
+
+    with pytest.raises(ValueError, match="Unsupported GitHub event"):
+        normalize_webhook_event(
+            event_type="pull_request_review",
+            delivery_id="delivery-review",
+            payload=payload,
+        )
+    with pytest.raises(ValueError, match="Unsupported GitHub event"):
+        normalize_webhook_event(
+            event_type="pull_request_review_thread",
+            delivery_id="delivery-review-thread",
+            payload=payload,
+        )
 
 
 def test_webhook_delivery_id_conflict_is_blocked(engine: Engine) -> None:

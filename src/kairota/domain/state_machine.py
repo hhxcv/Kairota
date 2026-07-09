@@ -9,13 +9,24 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.READY,
             WorkItemStatus.BLOCKED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.BACKLOG: frozenset(
-        {WorkItemStatus.READY, WorkItemStatus.BLOCKED, WorkItemStatus.HUMAN_DECISION}
+        {
+            WorkItemStatus.READY,
+            WorkItemStatus.BLOCKED,
+            WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
+        }
     ),
     WorkItemStatus.READY: frozenset(
-        {WorkItemStatus.CLAIMED, WorkItemStatus.BLOCKED, WorkItemStatus.HUMAN_DECISION}
+        {
+            WorkItemStatus.CLAIMED,
+            WorkItemStatus.BLOCKED,
+            WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
+        }
     ),
     WorkItemStatus.CLAIMED: frozenset(
         {
@@ -23,6 +34,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.READY,
             WorkItemStatus.BLOCKED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.IMPLEMENTING: frozenset(
@@ -30,6 +42,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.PR_OPEN,
             WorkItemStatus.BLOCKED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.PR_OPEN: frozenset(
@@ -41,6 +54,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.STRICT_AI_REVIEW,
             WorkItemStatus.GATE_FAILED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.WAITING_CHECKS: frozenset(
@@ -52,6 +66,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.STRICT_AI_REVIEW,
             WorkItemStatus.GATE_FAILED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.MERGE_ARMED: frozenset(
@@ -61,6 +76,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.CI_FAILED,
             WorkItemStatus.STRICT_AI_REVIEW,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.MERGED: frozenset(
@@ -86,6 +102,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.MERGED,
             WorkItemStatus.GATE_FAILED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.CI_FAILED: frozenset(
@@ -95,6 +112,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.MERGED,
             WorkItemStatus.BLOCKED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.GATE_FAILED: frozenset(
@@ -104,6 +122,7 @@ ALLOWED_WORK_ITEM_TRANSITIONS: dict[WorkItemStatus, frozenset[WorkItemStatus]] =
             WorkItemStatus.STRICT_AI_REVIEW,
             WorkItemStatus.MERGED,
             WorkItemStatus.HUMAN_DECISION,
+            WorkItemStatus.DONE,
         }
     ),
     WorkItemStatus.DONE: frozenset(),

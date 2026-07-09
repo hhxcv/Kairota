@@ -21,9 +21,6 @@ class WorkItemPlanInput:
     priority: int
     risk: RiskLevel
     created_order: int
-    expected_touch: str | None
-    acceptance: str | None
-    validation: str | None
     conflict_keys: frozenset[str] = field(default_factory=frozenset)
     dependency_ids: frozenset[str] = field(default_factory=frozenset)
 
@@ -104,27 +101,6 @@ def evaluate_candidate(
             {"missing_dependencies": missing_dependencies},
         )
 
-    if not present(item.expected_touch):
-        return blocked(
-            item,
-            SchedulerDecisionCode.BLOCKED_BY_MISSING_EXPECTED_TOUCH,
-            "Work item is missing expected touch facts.",
-        )
-
-    if not present(item.acceptance):
-        return blocked(
-            item,
-            SchedulerDecisionCode.BLOCKED_BY_MISSING_ACCEPTANCE,
-            "Work item is missing acceptance criteria.",
-        )
-
-    if not present(item.validation):
-        return blocked(
-            item,
-            SchedulerDecisionCode.BLOCKED_BY_MISSING_VALIDATION,
-            "Work item is missing validation evidence requirements.",
-        )
-
     if remaining_capacity <= 0:
         return blocked(
             item,
@@ -168,7 +144,3 @@ def normalized_conflict_keys(item: WorkItemPlanInput) -> tuple[str, ...]:
     if item.conflict_keys:
         return tuple(sorted(item.conflict_keys))
     return (FALLBACK_CONFLICT_KEY,)
-
-
-def present(value: str | None) -> bool:
-    return bool(value and value.strip())

@@ -1,6 +1,6 @@
 ---
 doc:
-  updated_at: 2026-07-08
+  updated_at: 2026-07-09
   category: contract
   status: mixed-current-planned
   audience: ai
@@ -13,19 +13,22 @@ doc:
 Status: mixed current and planned. Deterministic scheduler planning,
 repository-scoped candidate loading, claim-next, leases, lease heartbeats,
 stale lease expiry, conflict locks, scheduler decision records, and blocked
-reason codes are implemented. MCP exposure and broader capacity policy remain
-planned.
+reason codes are implemented. `claim-next` enforces an optional
+`max_active_leases` worker cap for repository-scoped or global claims. MCP
+exposure remains planned.
 
-## Planned Responsibilities
+## Implemented Responsibilities
 
 - Select ready work items for the whole queue or a registered repository.
-- Enforce dependencies.
+- Enforce dependencies, where a dependency is satisfied by a `done` work item.
 - Enforce conflict locks.
 - Enforce worker capacity.
 - Claim work with a lease and fencing token.
 - Record why work was assigned or rejected.
-- Reconcile repository review, check, worker, and merge events through service
-  commands and sync reducers.
+
+The scheduler does not require expected touch, acceptance, validation, CI,
+review, or PR gate fields to assign work. Those facts are project-management
+and workbench facts.
 
 ## Implemented Surfaces
 
@@ -33,7 +36,7 @@ planned.
 | --- | --- |
 | `POST /scheduler/cycles` | Records deterministic planning decisions for a queue or repository scope. |
 | `GET /queue/ready` | Lists ready work, optionally by repository id. |
-| `POST /queue/claim-next` | Plans and claims the next schedulable work item in one idempotent command. |
+| `POST /queue/claim-next` | Plans and claims the next schedulable work item in one idempotent command. Supports optional `max_active_leases`. |
 | `GET /queue/summary` | Reads status, active lease, and active lock counts. |
 | `GET /queue/workbench` | Reads the human queue view, optionally by repository id. |
 | `POST /leases/{id}/heartbeat` | Refreshes valid lease authority. |
@@ -57,6 +60,31 @@ Stable ordering:
   and final state updates.
 - Expired leases are recoverable by scheduler reconciliation.
 
+## Worker Capacity
+
+`POST /queue/claim-next` accepts `max_active_leases`. When the current active
+lease count for the requested `repository_id` is greater than or equal to that
+cap, Kairota records a `capacity_blocked` scheduler cycle and returns
+`blocked_by_capacity` instead of issuing another lease.
+
+The cap is supplied by the managed project's AI loop because Kairota does not
+own project staffing policy. The same cap must be sent on every claim attempt in
+that loop. Direct `POST /work-items/{id}/claim` remains a lower-level command and
+does not apply this project-loop capacity policy.
+
+## Scheduling Inputs
+
+Current scheduler eligibility uses only:
+
+- `status == ready`;
+- dependency work items are `done`;
+- remaining worker capacity;
+- conflict keys and active conflict locks.
+
+Priority, risk, and creation order affect deterministic ordering. Expected
+touch, acceptance, validation, CI status, review status, and PR state are kept
+for triage, reporting, and UI context; they are not hard scheduling gates.
+
 ## Conflict Locks
 
 Conflict keys prevent unsafe parallel work.
@@ -64,9 +92,8 @@ Conflict keys prevent unsafe parallel work.
 Planned lock sources:
 
 - Active claimed work.
-- Open or merge-armed PRs.
 - Explicit work item conflict keys.
-- Conservative fallback for missing or ambiguous touch data.
+- Conservative fallback for missing conflict keys.
 
 Default serial areas:
 

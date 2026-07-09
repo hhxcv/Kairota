@@ -344,24 +344,14 @@ def reduce_issue(
 ) -> None:
     if issue.state != "closed":
         return
-    merged_pr_exists = session.scalar(
-        select(RepoPullRequest.id)
-        .where(
-            RepoPullRequest.repository_id == repository.id,
-            RepoPullRequest.work_item_id == work_item.id,
-            RepoPullRequest.merged.is_(True),
-        )
-        .limit(1)
+    transition_work_item(
+        session,
+        work_item,
+        WorkItemStatus.DONE,
+        stats,
+        actor=actor,
+        reason="issue_closed",
     )
-    if not merged_pr_exists:
-        transition_work_item(
-            session,
-            work_item,
-            WorkItemStatus.HUMAN_DECISION,
-            stats,
-            actor=actor,
-            reason="issue_closed_without_merged_pr",
-        )
 
 
 def upsert_pull_request(

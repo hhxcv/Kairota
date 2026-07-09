@@ -235,7 +235,7 @@ def test_poll_sync_creates_issue_work_item_and_replays_idempotently(
         assert session.scalar(select(WorkItem.repository_id)) == repository.id
 
 
-def test_issue_close_without_merged_pr_moves_to_human_decision(engine: Engine) -> None:
+def test_issue_close_marks_work_item_done(engine: Engine) -> None:
     snapshot = sync_snapshot(issues=(issue(state="closed"),))
     client: GitHubClient = FakeGitHubClient(snapshot)
 
@@ -249,10 +249,7 @@ def test_issue_close_without_merged_pr_moves_to_human_decision(engine: Engine) -
         )
 
         assert result.transitions_applied == 1
-        assert (
-            session.scalar(select(WorkItem.status))
-            == WorkItemStatus.HUMAN_DECISION.value
-        )
+        assert session.scalar(select(WorkItem.status)) == WorkItemStatus.DONE.value
 
 
 def test_pull_request_open_and_successful_gates_move_to_merge_armed(

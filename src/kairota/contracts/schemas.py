@@ -14,7 +14,9 @@ from kairota.contracts.enums import (
     LockHolderSource,
     OutboxStatus,
     PullRequestState,
+    RepositoryIssueState,
     RepositoryProvider,
+    RepositorySyncMode,
     ReviewGateState,
     RiskLevel,
     SchedulerDecisionCode,
@@ -212,6 +214,7 @@ class ClaimNextWorkItemRead(ContractModel):
     conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
     reason: SchedulerDecisionCode | None = None
     explanation: str | None = None
+    blocked_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class LeaseHeartbeatCommand(ContractModel):
@@ -284,16 +287,16 @@ class WorkerRunCloseCommand(WorkerRunReportCommand):
 
 
 class WorkItemTriageCommand(ContractModel):
-    status: WorkItemStatus = WorkItemStatus.READY
-    priority: int = Field(default=100, ge=0)
-    risk: RiskLevel = RiskLevel.MEDIUM
-    work_type: WorkType = WorkType.IMPLEMENTATION
-    autonomy_mode: AutonomyMode = AutonomyMode.AI_ASSISTED
+    status: WorkItemStatus | None = None
+    priority: int | None = Field(default=None, ge=0)
+    risk: RiskLevel | None = None
+    work_type: WorkType | None = None
+    autonomy_mode: AutonomyMode | None = None
     expected_touch: str | None = None
     acceptance: str | None = None
     validation: str | None = None
-    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
-    dependency_ids: tuple[str, ...] = Field(default_factory=tuple)
+    conflict_keys: tuple[str, ...] | None = None
+    dependency_ids: tuple[str, ...] | None = None
 
 
 class RepositoryCreate(ContractModel):
@@ -326,6 +329,15 @@ class RepositorySyncRead(ContractModel):
     transitions_applied: int = 0
     stale_summaries_marked: int = 0
     inbound_event_id: str | None = None
+
+
+class RepositorySyncCommand(ContractModel):
+    mode: RepositorySyncMode = RepositorySyncMode.FULL
+    issue_state: RepositoryIssueState = RepositoryIssueState.ALL
+    labels: tuple[str, ...] = Field(default_factory=tuple)
+    issue_numbers: tuple[int, ...] = Field(default_factory=tuple)
+    since: str | None = None
+    max_pages: int | None = Field(default=None, ge=1, le=100)
 
 
 class PullRequestSummaryRead(ContractModel):

@@ -20,7 +20,14 @@ from kairota.contracts.schemas import (
     WorkerRunReportCommand,
 )
 from kairota.domain.state_machine import is_work_item_transition_allowed
-from kairota.models.records import AuditEvent, Lease, LockHolder, WorkerRun, WorkItem
+from kairota.models.records import (
+    AuditEvent,
+    Lease,
+    LockHolder,
+    RepoPullRequest,
+    WorkerRun,
+    WorkItem,
+)
 from kairota.services.errors import CommandBlockedError
 from kairota.services.idempotency import JsonObject, run_idempotent_command
 
@@ -392,17 +399,23 @@ def apply_close_transition(
     actor: str,
 ) -> None:
     work_item = require_work_item(session, run.work_item_id)
-    if (
-        result == WorkerRunResult.DONE
-        and work_item.status == WorkItemStatus.MERGED.value
-    ):
-        transition_work_item_if_allowed(
-            session,
-            work_item,
-            WorkItemStatus.DONE,
-            actor=actor,
-            reason="worker_run_done_after_merge",
-        )
+    if result == WorkerRunResult.DONE:
+        if work_item.status == WorkItemStatus.MERGED.value:
+            transition_work_item_if_allowed(
+                session,
+                work_item,
+                WorkItemStatus.DONE,
+                actor=actor,
+                reason="worker_run_done_after_merge",
+            )
+        elif not has_linked_pull_request(session, work_item.id):
+            transition_work_item_if_allowed(
+                session,
+                work_item,
+                WorkItemStatus.DONE,
+                actor=actor,
+                reason="worker_run_done_without_pr",
+            )
     elif result == WorkerRunResult.BLOCKED:
         transition_work_item_if_allowed(
             session,
@@ -411,6 +424,13 @@ def apply_close_transition(
             actor=actor,
             reason="worker_run_blocked",
         )
+
+
+def has_linked_pull_request(session: Session, work_item_id: str) -> bool:
+    pull_request_id = session.scalar(
+        select(RepoPullRequest.id).where(RepoPullRequest.work_item_id == work_item_id)
+    )
+    return pull_request_id is not None
 
 
 def transition_work_item_if_allowed(

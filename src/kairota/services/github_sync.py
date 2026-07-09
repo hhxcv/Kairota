@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from typing import cast
 
@@ -16,6 +16,7 @@ from kairota.adapters.github.models import (
     GitHubRepositoryConfig,
     GitHubRepositorySnapshot,
     GitHubReviewSnapshot,
+    GitHubSyncOptions,
     GitHubSyncSnapshot,
     GitHubWebhookEvent,
 )
@@ -24,11 +25,13 @@ from kairota.contracts.enums import (
     CheckStatus,
     EventStatus,
     PullRequestState,
+    RepositoryIssueState,
     RepositoryProvider,
+    RepositorySyncMode,
     ReviewGateState,
     WorkItemStatus,
 )
-from kairota.contracts.schemas import RepositorySyncRead
+from kairota.contracts.schemas import RepositorySyncCommand, RepositorySyncRead
 from kairota.domain.state_machine import is_work_item_transition_allowed
 from kairota.models.records import (
     AuditEvent,
@@ -62,8 +65,13 @@ def sync_repository_command(
     repository_id: str,
     idempotency_key: str,
     client: GitHubClient,
+    command: RepositorySyncCommand | None = None,
 ) -> RepositorySyncRead:
-    payload: JsonObject = {"repository_id": repository_id}
+    sync_command = command or RepositorySyncCommand()
+    payload: JsonObject = {
+        "repository_id": repository_id,
+        **cast(JsonObject, sync_command.model_dump(mode="json")),
+    }
 
     def execute() -> JsonObject:
         repository = session.get(Repository, repository_id)
@@ -84,6 +92,14 @@ def sync_repository_command(
         snapshot = client.fetch_repository_snapshot(
             repository_config(repository),
             cursor.cursor,
+            options=sync_options_from_command(sync_command),
+        )
+        snapshot = refresh_tracked_issue_facts(
+            session,
+            repository,
+            snapshot,
+            client=client,
+            command=sync_command,
         )
         stats = apply_sync_snapshot(
             session,
@@ -110,6 +126,89 @@ def sync_repository_command(
     body = dict(result.body)
     body["replayed"] = result.replayed
     return RepositorySyncRead.model_validate(body)
+
+
+def sync_options_from_command(command: RepositorySyncCommand) -> GitHubSyncOptions:
+    return GitHubSyncOptions(
+        mode=RepositorySyncMode(command.mode),
+        issue_state=RepositoryIssueState(command.issue_state),
+        labels=command.labels,
+        issue_numbers=command.issue_numbers,
+        since=command.since,
+        max_pages=command.max_pages,
+    )
+
+
+def refresh_tracked_issue_facts(
+    session: Session,
+    repository: Repository,
+    snapshot: GitHubSyncSnapshot,
+    *,
+    client: GitHubClient,
+    command: RepositorySyncCommand,
+) -> GitHubSyncSnapshot:
+    if command.issue_numbers:
+        return snapshot
+
+    seen_issue_numbers = {issue.number for issue in snapshot.issues}
+    missing_active_numbers = tuple(
+        sorted(
+            tracked_active_issue_numbers(session, repository.id) - seen_issue_numbers
+        )
+    )
+    if not missing_active_numbers:
+        return snapshot
+
+    exact_snapshot = client.fetch_repository_snapshot(
+        repository_config(repository),
+        None,
+        options=GitHubSyncOptions(
+            mode=RepositorySyncMode.ISSUES,
+            issue_state=RepositoryIssueState.ALL,
+            issue_numbers=missing_active_numbers,
+            max_pages=command.max_pages,
+        ),
+    )
+    issues_by_number = {issue.number: issue for issue in snapshot.issues}
+    for issue in exact_snapshot.issues:
+        issues_by_number[issue.number] = issue
+    return replace(snapshot, issues=tuple(issues_by_number.values()))
+
+
+def tracked_active_issue_numbers(
+    session: Session,
+    repository_id: str,
+) -> set[int]:
+    external_ids = session.scalars(
+        select(ExternalRef.external_id)
+        .join(WorkItem, ExternalRef.work_item_id == WorkItem.id)
+        .where(
+            ExternalRef.provider == RepositoryProvider.GITHUB.value,
+            ExternalRef.external_type == "issue",
+            ExternalRef.repository_id == repository_id,
+            ExternalRef.work_item_id.is_not(None),
+            WorkItem.status != WorkItemStatus.DONE.value,
+        )
+    )
+    issue_numbers: set[int] = set()
+    for external_id in external_ids:
+        issue_number = issue_number_from_external_id(repository_id, external_id)
+        if issue_number is not None:
+            issue_numbers.add(issue_number)
+    return issue_numbers
+
+
+def issue_number_from_external_id(
+    repository_id: str,
+    external_id: str,
+) -> int | None:
+    prefix = f"{repository_id}#issue:"
+    if not external_id.startswith(prefix):
+        return None
+    try:
+        return int(external_id.removeprefix(prefix))
+    except ValueError:
+        return None
 
 
 def process_github_webhook_event(

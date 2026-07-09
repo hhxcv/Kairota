@@ -244,17 +244,27 @@ def triage_work_item_command(
                 "Work item does not exist.",
                 {"work_item_id": work_item_id},
             )
-        work_item.status = str(command.status)
-        work_item.priority = command.priority
-        work_item.risk = str(command.risk)
-        work_item.work_type = str(command.work_type)
-        work_item.autonomy_mode = str(command.autonomy_mode)
-        work_item.expected_touch = command.expected_touch
-        work_item.acceptance = command.acceptance
-        work_item.validation = command.validation
+        if command.status is not None:
+            work_item.status = str(command.status)
+        if command.priority is not None:
+            work_item.priority = command.priority
+        if command.risk is not None:
+            work_item.risk = str(command.risk)
+        if command.work_type is not None:
+            work_item.work_type = str(command.work_type)
+        if command.autonomy_mode is not None:
+            work_item.autonomy_mode = str(command.autonomy_mode)
+        if command.expected_touch is not None:
+            work_item.expected_touch = command.expected_touch
+        if command.acceptance is not None:
+            work_item.acceptance = command.acceptance
+        if command.validation is not None:
+            work_item.validation = command.validation
 
-        replace_conflict_keys(session, work_item_id, command.conflict_keys)
-        replace_dependencies(session, work_item_id, command.dependency_ids)
+        if command.conflict_keys is not None:
+            replace_conflict_keys(session, work_item_id, command.conflict_keys)
+        if command.dependency_ids is not None:
+            replace_dependencies(session, work_item_id, command.dependency_ids)
         session.add(
             AuditEvent(
                 actor=actor,
@@ -262,7 +272,7 @@ def triage_work_item_command(
                 subject_type="work_item",
                 subject_id=work_item.id,
                 summary="Work item scheduling facts were triaged.",
-                details={"status": str(command.status)},
+                details={"status": work_item.status},
             )
         )
         session.flush()
@@ -292,17 +302,19 @@ def validate_triage_command(
             "Work item does not exist.",
             {"work_item_id": work_item_id},
         )
-    status = str(command.status)
-    if status not in ALLOWED_TRIAGE_STATUSES:
+    if (
+        command.status is not None
+        and str(command.status) not in ALLOWED_TRIAGE_STATUSES
+    ):
         raise CommandBlockedError(
             "invalid_triage_status",
             "Work item triage can only move work to backlog, ready, blocked, "
             "or human decision.",
-            {"status": status},
+            {"status": str(command.status)},
         )
     requested_dependency_ids = {
         dependency_id.strip()
-        for dependency_id in command.dependency_ids
+        for dependency_id in command.dependency_ids or ()
         if dependency_id.strip()
     }
     if work_item_id in requested_dependency_ids:

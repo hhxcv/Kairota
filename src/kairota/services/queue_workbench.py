@@ -12,6 +12,7 @@ from kairota.contracts.enums import (
     EventStatus,
     LeaseStatus,
     ReviewGateState,
+    SchedulerDecisionCode,
     WorkerRunStatus,
     WorkItemStatus,
 )
@@ -28,12 +29,15 @@ from kairota.models.records import (
     AuditEvent,
     InboundEvent,
     Lease,
+    LockHolder,
     RepoCheckSummary,
     RepoPullRequest,
     RepoReviewSummary,
     SyncCursor,
     WorkerRun,
+    WorkItem,
 )
+from kairota.scheduler.planner import FALLBACK_CONFLICT_KEY
 from kairota.services.idempotency import JsonObject
 from kairota.services.work_items import list_work_items, queue_summary
 
@@ -112,11 +116,15 @@ def queue_workbench(
     work_items = list_work_items(session, repository_id=repository_id)
     runs_by_work_item = latest_worker_runs_by_work_item(session)
     repository_by_work_item = repository_state_by_work_item(session)
+    completed_work_item_ids = load_completed_work_item_ids(session)
+    active_conflict_keys = load_active_conflict_keys(session)
     rows = tuple(
         work_item_to_row(
             work_item,
             worker_run=runs_by_work_item.get(work_item.id),
             repository=repository_by_work_item.get(work_item.id, {}),
+            completed_work_item_ids=completed_work_item_ids,
+            active_conflict_keys=active_conflict_keys,
         )
         for work_item in work_items
     )
@@ -149,14 +157,26 @@ def work_item_to_row(
     *,
     worker_run: WorkerRun | None,
     repository: JsonObject,
+    completed_work_item_ids: frozenset[str],
+    active_conflict_keys: frozenset[str],
 ) -> QueueWorkbenchRowRead:
     status = WorkItemStatus(str(work_item.status))
     reason_code, next_action = REASON_AND_ACTION[status]
+    section = STATUS_SECTION[status]
+    if status == WorkItemStatus.READY:
+        ready_blocker = ready_blocker_reason(
+            work_item,
+            completed_work_item_ids=completed_work_item_ids,
+            active_conflict_keys=active_conflict_keys,
+        )
+        if ready_blocker is not None:
+            reason_code, next_action = ready_blocker
+            section = "blocked"
     return QueueWorkbenchRowRead(
         id=work_item.id,
         repository_id=work_item.repository_id,
         title=work_item.title,
-        section=STATUS_SECTION[status],
+        section=section,
         status=status,
         priority=work_item.priority,
         risk=work_item.risk,
@@ -172,6 +192,58 @@ def work_item_to_row(
         next_action=next_action,
         worker_run=worker_run_to_read(worker_run) if worker_run is not None else None,
         repository=repository,
+    )
+
+
+def ready_blocker_reason(
+    work_item: WorkItemRead,
+    *,
+    completed_work_item_ids: frozenset[str],
+    active_conflict_keys: frozenset[str],
+) -> tuple[str, str] | None:
+    missing_dependencies = sorted(
+        set(work_item.dependency_ids) - completed_work_item_ids
+    )
+    if missing_dependencies:
+        return (
+            SchedulerDecisionCode.BLOCKED_BY_DEPENDENCY.value,
+            "Wait for dependencies to close",
+        )
+
+    conflict_keys = (
+        tuple(sorted(work_item.conflict_keys))
+        if work_item.conflict_keys
+        else (FALLBACK_CONFLICT_KEY,)
+    )
+    conflicts = sorted(set(conflict_keys) & active_conflict_keys)
+    if conflicts:
+        return (
+            SchedulerDecisionCode.BLOCKED_BY_CONFLICT_KEY.value,
+            "Wait for conflicting active work",
+        )
+    return None
+
+
+def load_completed_work_item_ids(session: Session) -> frozenset[str]:
+    return frozenset(
+        session.scalars(
+            select(WorkItem.id).where(WorkItem.status == WorkItemStatus.DONE.value)
+        )
+    )
+
+
+def load_active_conflict_keys(session: Session) -> frozenset[str]:
+    active_lease_ids = select(Lease.id).where(Lease.status == LeaseStatus.ACTIVE.value)
+    return frozenset(
+        session.scalars(
+            select(LockHolder.conflict_key).where(
+                LockHolder.released_at.is_(None),
+                (
+                    LockHolder.lease_id.is_(None)
+                    | LockHolder.lease_id.in_(active_lease_ids)
+                ),
+            )
+        )
     )
 
 

@@ -43,7 +43,7 @@ implemented yet.
 
 | Method | Path | Status |
 | --- | --- | --- |
-| `GET` | `/healthz` | implemented |
+| `GET` | `/healthz` | implemented; includes opaque database identity |
 | `GET` | `/work-items` | implemented |
 | `GET` | `/work-items/{id}` | implemented |
 | `POST` | `/work-items` | implemented; requires `Idempotency-Key` |
@@ -64,14 +64,22 @@ implemented yet.
 | `POST` | `/repositories` | implemented; requires `Idempotency-Key` |
 | `GET` | `/repositories` | implemented |
 | `GET` | `/repositories/{id}` | implemented |
-| `POST` | `/repositories/{id}/sync` | implemented; requires `Idempotency-Key` |
+| `POST` | `/repositories/{id}/sync` | implemented; requires `Idempotency-Key`; accepts sync mode and issue filters |
 | `POST` | `/webhooks/github` | implemented; verifies `X-Hub-Signature-256` when configured |
 
 `GET /work-items`, `GET /queue/summary`, `GET /queue/workbench`,
 `GET /queue/ready`, `POST /scheduler/cycles`, and `POST /queue/claim-next`
 support repository-scoped scheduling through `repository_id`.
 `POST /queue/claim-next` also accepts `max_active_leases`; when the cap is
-reached it returns `blocked_by_capacity` and does not issue a lease.
+reached it returns `blocked_by_capacity` and does not issue a lease. When
+capacity remains but no candidate can be claimed, the blocked response includes
+prioritized reason counts so operators can see dependency and conflict blockers
+instead of only unrelated non-ready status.
+
+`POST /repositories/{id}/sync` accepts `mode=full|issues`, `issue_state`,
+`labels`, `issue_numbers`, `since`, and `max_pages`. `mode=issues` is the
+bounded managed-project onboarding path; it skips repository-wide pull request,
+check, and review enrichment.
 
 Implemented command endpoints record command idempotency in
 `command_requests`. Reusing the same key and payload returns the original
@@ -92,7 +100,7 @@ result; reusing the same key with a different payload returns
 | `reconcile leases` | implemented |
 | `worker-runs create/show/heartbeat/report/close` | implemented |
 | `repositories register/list/show` | implemented |
-| `sync repository` | implemented; requires `--idempotency-key` |
+| `sync repository` | implemented; requires `--idempotency-key`; supports issue-only onboarding filters |
 | `demo seed` | implemented as a development fixture |
 | `smoke m1-exit` | implemented |
 
@@ -101,10 +109,10 @@ result; reusing the same key with a different payload returns
 Managed projects should use the installable skill at
 `skills/kairota-managed-project/SKILL.md`. That skill instructs project-local AI
 agents to use the default Kairota API base URL, register their GitHub
-repository, sync or receive issue events, submit triage facts, query ready work,
-claim leases, and report worker progress. Kairota remains the mechanical
-scheduler; dependency analysis and issue interpretation stay with the managed
-project's AI.
+repository, sync or receive issue events, submit patch-like triage facts, query
+ready work, claim leases, and report worker progress. Kairota remains the
+mechanical scheduler; dependency analysis and issue interpretation stay with the
+managed project's AI.
 
 The expected operating mode is: a human starts Kairota, registers a managed
 repository, installs the managed-project skill in that repository, and tells the

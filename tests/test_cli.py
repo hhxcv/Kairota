@@ -481,3 +481,114 @@ def test_cli_reports_claim_blocked(
     blocked = read_json(capsys)
     assert blocked["status"] == "blocked"
     assert blocked["reason_code"] == "blocked_by_status"
+
+
+def test_cli_rejects_unsafe_initial_status_before_service_call(
+    cli_database: None,
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main(
+            [
+                "work-items",
+                "create",
+                "--idempotency-key",
+                "cli-unsafe-status",
+                "--title",
+                "Unsafe",
+                "--status",
+                "done",
+            ]
+        )
+
+    assert exc_info.value.code == 2
+
+
+def test_cli_triage_patch_preserves_and_clears_scheduling_facts(
+    cli_database: None,
+    capsys: CaptureFixture[str],
+) -> None:
+    assert (
+        main(
+            [
+                "work-items",
+                "create",
+                "--idempotency-key",
+                "cli-patch-dependency",
+                "--title",
+                "CLI patch dependency",
+                "--status",
+                "ready",
+            ]
+        )
+        == 0
+    )
+    dependency = read_json(capsys)
+    dependency_id = str(dependency["id"])
+
+    assert (
+        main(
+            [
+                "work-items",
+                "create",
+                "--idempotency-key",
+                "cli-patch-work",
+                "--title",
+                "CLI patch work",
+                "--status",
+                "ready",
+                "--priority",
+                "12",
+                "--acceptance",
+                "Keep acceptance",
+                "--validation",
+                "Keep validation",
+                "--conflict-key",
+                "runtime:cli-patch",
+                "--dependency-id",
+                dependency_id,
+            ]
+        )
+        == 0
+    )
+    work = read_json(capsys)
+    work_item_id = str(work["id"])
+
+    assert (
+        main(
+            [
+                "work-items",
+                "triage",
+                work_item_id,
+                "--idempotency-key",
+                "cli-patch-status",
+                "--status",
+                "blocked",
+            ]
+        )
+        == 0
+    )
+    patched = read_json(capsys)
+    assert patched["status"] == "blocked"
+    assert patched["priority"] == 12
+    assert patched["acceptance"] == "Keep acceptance"
+    assert patched["validation"] == "Keep validation"
+    assert patched["conflict_keys"] == ["runtime:cli-patch"]
+    assert patched["dependency_ids"] == [dependency_id]
+
+    assert (
+        main(
+            [
+                "work-items",
+                "triage",
+                work_item_id,
+                "--idempotency-key",
+                "cli-clear-conflicts",
+                "--clear-conflict-keys",
+            ]
+        )
+        == 0
+    )
+    cleared = read_json(capsys)
+    assert cleared["status"] == "blocked"
+    assert cleared["conflict_keys"] == []
+    assert cleared["dependency_ids"] == [dependency_id]

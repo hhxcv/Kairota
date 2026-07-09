@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -16,6 +18,7 @@ class HealthResponse(BaseModel):
     status: str
     service: str
     version: str
+    database_identity: str
 
 
 def create_app(
@@ -48,6 +51,7 @@ def create_app(
             status="ok",
             service=app_settings.app_name,
             version=__version__,
+            database_identity=database_identity(app_settings.database_url),
         )
 
     app.include_router(router)
@@ -55,3 +59,7 @@ def create_app(
 
 
 app = create_app()
+
+
+def database_identity(database_url: str) -> str:
+    return hashlib.sha256(database_url.encode("utf-8")).hexdigest()[:12]

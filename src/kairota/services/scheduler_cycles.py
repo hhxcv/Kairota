@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections import Counter
+from dataclasses import dataclass
 from datetime import timedelta
 from typing import cast
 
@@ -40,6 +42,7 @@ from kairota.scheduler.claims import (
     heartbeat_lease,
 )
 from kairota.scheduler.planner import (
+    SchedulerPlanDecision,
     SchedulerPlanInput,
     WorkItemPlanInput,
     plan_scheduler_cycle,
@@ -178,13 +181,12 @@ def claim_next_work_item_command(
         )
         session.flush()
         if not plan.assigned_work_item_ids:
-            first_decision = plan.decisions[0] if plan.decisions else None
+            summary = summarize_blocked_decisions(plan.decisions)
             read_model = ClaimNextWorkItemRead(
                 claimed=False,
-                reason=first_decision.code if first_decision is not None else None,
-                explanation=first_decision.explanation
-                if first_decision is not None
-                else "No schedulable work item was found.",
+                reason=summary.reason,
+                explanation=summary.explanation,
+                blocked_counts=summary.blocked_counts,
             )
             return cast(JsonObject, read_model.model_dump(mode="json"))
 
@@ -222,6 +224,61 @@ def claim_next_work_item_command(
         execute=execute,
     )
     return ClaimNextWorkItemRead.model_validate(result.body)
+
+
+@dataclass(frozen=True)
+class BlockedDecisionSummary:
+    reason: SchedulerDecisionCode | None
+    explanation: str
+    blocked_counts: dict[str, int]
+
+
+BLOCKED_REASON_PRIORITY = (
+    SchedulerDecisionCode.BLOCKED_BY_DEPENDENCY,
+    SchedulerDecisionCode.BLOCKED_BY_CONFLICT_KEY,
+    SchedulerDecisionCode.BLOCKED_BY_CAPACITY,
+    SchedulerDecisionCode.BLOCKED_BY_HUMAN_DECISION,
+    SchedulerDecisionCode.BLOCKED_BY_CI,
+    SchedulerDecisionCode.BLOCKED_BY_REVIEW_GATE,
+    SchedulerDecisionCode.BLOCKED_BY_STATUS,
+)
+
+
+def summarize_blocked_decisions(
+    decisions: tuple[SchedulerPlanDecision, ...],
+) -> BlockedDecisionSummary:
+    typed_decisions = [
+        decision
+        for decision in decisions
+        if getattr(decision, "code", None) != SchedulerDecisionCode.ASSIGNED
+    ]
+    if not typed_decisions:
+        return BlockedDecisionSummary(
+            reason=None,
+            explanation="No schedulable work item was found.",
+            blocked_counts={},
+        )
+
+    counts = Counter(str(decision.code) for decision in typed_decisions)
+    reason = next(
+        (
+            code
+            for code in BLOCKED_REASON_PRIORITY
+            if counts.get(code.value, 0) > 0
+        ),
+        SchedulerDecisionCode(str(typed_decisions[0].code)),
+    )
+    count_text = ", ".join(
+        f"{code}={count}" for code, count in sorted(counts.items())
+    )
+    return BlockedDecisionSummary(
+        reason=reason,
+        explanation=(
+            "No schedulable work item was found. "
+            f"Blocked candidates: {count_text}."
+        ),
+        blocked_counts=dict(counts),
+    )
 
 
 def claim_work_item_command(

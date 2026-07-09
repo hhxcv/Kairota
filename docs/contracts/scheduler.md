@@ -14,7 +14,8 @@ Status: mixed current and planned. Deterministic scheduler planning,
 repository-scoped candidate loading, claim-next, leases, lease heartbeats,
 stale lease expiry, conflict locks, scheduler decision records, and blocked
 reason codes are implemented. `claim-next` enforces an optional
-`max_active_leases` worker cap for repository-scoped or global claims. MCP
+`max_active_leases` worker cap for repository-scoped or global claims and
+returns aggregate blocked reason counts when no candidate can be claimed. MCP
 exposure remains planned.
 
 ## Implemented Responsibilities
@@ -38,7 +39,7 @@ and workbench facts.
 | `GET /queue/ready` | Lists ready work, optionally by repository id. |
 | `POST /queue/claim-next` | Plans and claims the next schedulable work item in one idempotent command. Supports optional `max_active_leases`. |
 | `GET /queue/summary` | Reads status, active lease, and active lock counts. |
-| `GET /queue/workbench` | Reads the human queue view, optionally by repository id. |
+| `GET /queue/workbench` | Reads the human queue view, optionally by repository id; ready-status work with unmet dependencies or active conflicts is shown with blocker-specific actions. |
 | `POST /leases/{id}/heartbeat` | Refreshes valid lease authority. |
 | `POST /reconcile/leases/expire` | Expires stale leases and releases their locks. |
 
@@ -84,6 +85,10 @@ Current scheduler eligibility uses only:
 Priority, risk, and creation order affect deterministic ordering. Expected
 touch, acceptance, validation, CI status, review status, and PR state are kept
 for triage, reporting, and UI context; they are not hard scheduling gates.
+
+`status=ready` is intent, not proof that work is claimable now. The planner and
+workbench still check dependencies and active conflict locks before presenting
+work as claimable.
 
 ## Conflict Locks
 

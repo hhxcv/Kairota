@@ -45,7 +45,19 @@ and reports progress back.
 
 2. Sync issues through the configured GitHub adapter or wait for webhook intake.
    If the repository is already registered, sync first so the loop uses current
-   issue close state and current repository facts.
+   issue close state and current repository facts. Prefer bounded onboarding
+   sync for large repositories:
+
+   ```bash
+   curl -X POST "<default-kairota-api-base-url>/repositories/<repository-id>/sync" \
+     -H "Content-Type: application/json" \
+     -H "Idempotency-Key: <stable-sync-key>" \
+     -d '{"mode":"issues","issue_state":"open","max_pages":1}'
+   ```
+
+   Add `labels`, `issue_numbers`, `since`, or a higher `max_pages` only when
+   the project scope requires it. Use full sync later when PR/check enrichment
+   is needed for project management visibility.
 
 3. Decide whether issues are already triaged. An issue is ready for scheduling
    only when Kairota has dependency ids, conflict keys, and readiness status for
@@ -73,7 +85,9 @@ and reports progress back.
    Kairota scheduling requires readiness, satisfied dependencies, remaining
    worker capacity, and non-conflicting locks. Expected touch, acceptance,
    validation, risk, work type, CI, and review facts are useful management data,
-   but they are not scheduler gates.
+   but they are not scheduler gates. Triage is patch-like: omitted fields keep
+   existing values. Send an empty dependency or conflict list only to clear that
+   list intentionally.
 
 6. Query ready work for the registered project:
 
@@ -110,7 +124,9 @@ and reports progress back.
 9. When done, report validation, PR, review comments, CI, and merge state back
    through the Kairota worker and repository sync surfaces. For synced GitHub
    issue work, the issue closing is the completion signal that satisfies
-   downstream dependencies.
+   downstream dependencies. For non-PR work, close the worker run with result
+   `done`; the active lease and fencing token authorize Kairota to complete the
+   work item.
 
 10. Repeat the loop. If ready work exists, claim more until the worker cap is
     reached. If only untriaged work remains, triage it. If only blocked,
@@ -123,6 +139,8 @@ and reports progress back.
 - `blocked`: the project AI or a human explicitly marked the issue blocked.
 - `ready`: the issue may be claimed when dependencies, capacity, and conflict
   locks allow it.
+- `blocked_by_dependency` or `blocked_by_conflict_key` on a `ready` item means
+  the issue has ready intent but is not claimable now.
 - `claimed` or `implementing`: another worker has lease authority.
 - `blocked_by_capacity`: the project has reached its configured worker cap.
 - `waiting_checks`: implementation is waiting on repository or CI facts for

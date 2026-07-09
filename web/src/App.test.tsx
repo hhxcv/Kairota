@@ -5,8 +5,10 @@ import { App } from "./App";
 import {
   sectionIds,
   titleForSection,
+  type Repository,
   type QueueWorkbench,
   type QueueWorkbenchRow,
+  type RuntimeHealth,
 } from "./workbench";
 
 const fetchMock = vi.fn();
@@ -25,6 +27,7 @@ const fixtureRows: QueueWorkbenchRow[] = [
     expected_touch: "src/kairota/services/repositories.py",
     acceptance: "Repository registration and scoped ready queue are available.",
     validation: "pytest tests/test_api.py",
+    source_url: "https://example.test/owner/repo/issues/1",
     conflict_keys: ["runtime:repository"],
     dependency_ids: ["done-1"],
   }),
@@ -36,6 +39,7 @@ const fixtureRows: QueueWorkbenchRow[] = [
     priority: 20,
     risk: "high",
     work_type: "implementation",
+    repository_id: "repository-2",
     worker_run: {
       id: "run-1",
       lease_id: "lease-1",
@@ -65,6 +69,7 @@ const fixtureRows: QueueWorkbenchRow[] = [
     priority: 40,
     risk: "medium",
     work_type: "implementation",
+    repository_id: "repository-2",
     repository: {
       pull_request_number: 7,
       current_checks: 3,
@@ -84,6 +89,7 @@ const fixtureRows: QueueWorkbenchRow[] = [
     work_type: "test",
     reason_code: "blocked_by_ci",
     next_action: "Repair failing checks",
+    repository_id: "repository-2",
     repository: {
       pull_request_number: 8,
       current_checks: 4,
@@ -103,7 +109,27 @@ const fixtureRows: QueueWorkbenchRow[] = [
     work_type: "implementation",
     reason_code: "done",
     next_action: "No action",
+    repository_id: null,
   }),
+];
+
+const fixtureRepositories: Repository[] = [
+  {
+    id: "repository-1",
+    provider: "github",
+    provider_repo_id: "owner/repo",
+    name: "owner/repo",
+    default_branch: "main",
+    sync_status: "synced",
+  },
+  {
+    id: "repository-2",
+    provider: "github",
+    provider_repo_id: "second/repo",
+    name: "second/repo",
+    default_branch: "main",
+    sync_status: "unknown",
+  },
 ];
 
 const fixtureWorkbench: QueueWorkbench = {
@@ -163,6 +189,13 @@ const fixtureWorkbench: QueueWorkbench = {
   ],
 };
 
+const fixtureHealth: RuntimeHealth = {
+  status: "ok",
+  service: "Kairota Test",
+  version: "0.1.0",
+  database_identity: "abc123def456",
+};
+
 afterEach(() => {
   fetchMock.mockReset();
   vi.unstubAllEnvs();
@@ -171,10 +204,7 @@ afterEach(() => {
 describe("App", () => {
   it("renders every M1 queue section from the workbench read model", async () => {
     vi.stubEnv("VITE_KAIROTA_API_BASE_URL", "https://api.example.test");
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => fixtureWorkbench,
-    });
+    mockWorkbenchAndHealth();
 
     render(<App />);
 
@@ -191,14 +221,23 @@ describe("App", () => {
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(screen.getByText(/Local API/)).toBeInTheDocument();
+    expect(screen.getByText("https://api.example.test")).toBeInTheDocument();
+    expect(screen.getByText("abc123def456")).toBeInTheDocument();
+    const projectFilter = screen.getByRole("region", { name: "Project filter" });
+    expect(
+      within(projectFilter).getByRole("button", { name: /owner\/repo/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(projectFilter).getByRole("button", { name: /second\/repo/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(projectFilter).getByRole("button", { name: /Unscoped/ }),
+    ).toBeInTheDocument();
   });
 
   it("selects rows and updates the detail panel", async () => {
     vi.stubEnv("VITE_KAIROTA_API_BASE_URL", "https://api.example.test");
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => fixtureWorkbench,
-    });
+    mockWorkbenchAndHealth();
 
     render(<App />);
 
@@ -213,14 +252,12 @@ describe("App", () => {
     ).toBeInTheDocument();
     expect(within(detail).getByText("blocked_by_ci")).toBeInTheDocument();
     expect(within(detail).getByText(/1 failing/)).toBeInTheDocument();
+    expect(within(detail).getByText("second/repo")).toBeInTheDocument();
   });
 
   it("keeps search-filtered counts and decision inbox consistent", async () => {
     vi.stubEnv("VITE_KAIROTA_API_BASE_URL", "https://api.example.test");
-    fetchMock.mockResolvedValueOnce({
-      ok: true,
-      json: async () => fixtureWorkbench,
-    });
+    mockWorkbenchAndHealth();
 
     render(<App />);
 
@@ -230,9 +267,14 @@ describe("App", () => {
     });
 
     expect(screen.getByText(/1 visible work items \(6 total\)/)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "All1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Ready1" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Blocked0" })).toBeInTheDocument();
+    const sectionNav = screen.getByRole("navigation", { name: "Queue sections" });
+    expect(within(sectionNav).getByRole("button", { name: /All\s*1/ })).toBeInTheDocument();
+    expect(
+      within(sectionNav).getByRole("button", { name: /Ready\s*1/ }),
+    ).toBeInTheDocument();
+    expect(
+      within(sectionNav).getByRole("button", { name: /Blocked\s*0/ }),
+    ).toBeInTheDocument();
 
     const decisionInbox = screen.getByRole("region", { name: "Decision Inbox" });
     expect(within(decisionInbox).getByText("0")).toBeInTheDocument();
@@ -241,8 +283,41 @@ describe("App", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("filters the queue by multiple selected projects", async () => {
+    vi.stubEnv("VITE_KAIROTA_API_BASE_URL", "https://api.example.test");
+    mockWorkbenchAndHealth();
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Ready" });
+    const projectFilter = screen.getByRole("region", { name: "Project filter" });
+    fireEvent.click(within(projectFilter).getByRole("button", { name: /second\/repo/ }));
+
+    expect(screen.getByText(/3 visible work items \(6 total\)/)).toBeInTheDocument();
+    expect(
+      screen.queryByText("Implement managed-project onboarding"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByText("Record worker lifecycle evidence").length,
+    ).toBeGreaterThan(0);
+
+    fireEvent.click(within(projectFilter).getByRole("button", { name: /owner\/repo/ }));
+    expect(screen.getByText(/5 visible work items \(6 total\)/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText("Implement managed-project onboarding").length,
+    ).toBeGreaterThan(0);
+    expect(screen.queryByText("Merge worker run lifecycle")).not.toBeInTheDocument();
+
+    fireEvent.click(within(projectFilter).getByRole("button", { name: /All\s*6/ }));
+    expect(screen.getByText(/6 visible work items/)).toBeInTheDocument();
+    expect(screen.getAllByText("Merge worker run lifecycle").length).toBeGreaterThan(0);
+  });
+
   it("shows an empty queue state when the API is unavailable", async () => {
-    fetchMock.mockRejectedValueOnce(new Error("network down"));
+    fetchMock
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockRejectedValueOnce(new Error("network down"))
+      .mockRejectedValueOnce(new Error("network down"));
 
     render(<App />);
 
@@ -258,8 +333,25 @@ describe("App", () => {
       "http://127.0.0.1:8010/queue/workbench",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
+    expect(screen.getByText("http://127.0.0.1:8010")).toBeInTheDocument();
   });
 });
+
+function mockWorkbenchAndHealth() {
+  fetchMock
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => fixtureWorkbench,
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => fixtureHealth,
+    })
+    .mockResolvedValueOnce({
+      ok: true,
+      json: async () => fixtureRepositories,
+    });
+}
 
 function workbenchRow(
   overrides: Partial<QueueWorkbenchRow> &

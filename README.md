@@ -157,12 +157,15 @@ issues.
    curl -X POST "<default-kairota-api-base-url>/repositories/<repository-id>/sync" \
      -H "Content-Type: application/json" \
      -H "Idempotency-Key: <stable-sync-key>" \
-     -d '{}'
+     -d '{"mode":"issues","issue_state":"open","max_pages":1}'
    ```
 
-   GitHub webhook intake is implemented, but true external delivery requires an
-   environment with a reachable webhook endpoint. Polling sync is the local
-   default.
+   Use `mode=issues` for managed-project onboarding. It syncs bounded GitHub
+   issues without fetching repository-wide pull requests, checks, or review
+   summaries. Optional filters include `labels`, `issue_numbers`, `since`,
+   `issue_state`, and `max_pages`. GitHub webhook intake is implemented, but
+   true external delivery requires an environment with a reachable webhook
+   endpoint. Polling sync is the local default.
 
 7. Tell the managed project's main AI to start completing issues with Kairota.
 
@@ -188,7 +191,9 @@ issues.
    Scheduler gates are intentionally small: status `ready`, all dependency work
    items `done`, remaining worker capacity, and no active conflict-key lock.
    Review, CI, expected touch, acceptance, validation, risk, and work type are
-   management facts, not dependency-satisfaction gates.
+   management facts, not dependency-satisfaction gates. Triage updates are
+   patch-like: omitted fields preserve existing scheduling facts. Send an empty
+   list only when a dependency or conflict list should be cleared.
 
 9. Query and claim ready work with the project worker cap.
 
@@ -212,12 +217,15 @@ issues.
    state, review comments, or blockers through the worker-run endpoints. Close
    the worker run to release the lease and conflict locks.
 
-11. Complete issue work through GitHub close and sync.
+11. Complete work.
 
     For synced GitHub issue work, the dependency-satisfying completion signal is
     the GitHub issue becoming closed and Kairota syncing that issue to `done`.
     Closing a PR, receiving review comments, or passing CI can be recorded for
     project management, but those facts do not satisfy downstream dependencies.
+    For non-PR work, close the worker run with result `done` under the active
+    lease and fencing token; Kairota can transition that work item to `done`
+    without waiting for a linked PR.
 
 12. Repeat until no issue can progress.
 

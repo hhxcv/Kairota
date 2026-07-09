@@ -26,6 +26,7 @@ const fixtureRows: QueueWorkbenchRow[] = [
     acceptance: "Repository registration and scoped ready queue are available.",
     validation: "pytest tests/test_api.py",
     conflict_keys: ["runtime:repository"],
+    dependency_ids: ["done-1"],
   }),
   workbenchRow({
     id: "running-1",
@@ -184,6 +185,7 @@ describe("App", () => {
     expect(screen.getByRole("heading", { name: "Recovery Signals" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Recent Events" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Failures" })).toBeInTheDocument();
+    expect(screen.getByText("Merge worker run lifecycle - done")).toBeInTheDocument();
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.example.test/queue/workbench",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
@@ -213,6 +215,32 @@ describe("App", () => {
     expect(within(detail).getByText(/1 failing/)).toBeInTheDocument();
   });
 
+  it("keeps search-filtered counts and decision inbox consistent", async () => {
+    vi.stubEnv("VITE_KAIROTA_API_BASE_URL", "https://api.example.test");
+    fetchMock.mockResolvedValueOnce({
+      ok: true,
+      json: async () => fixtureWorkbench,
+    });
+
+    render(<App />);
+
+    await screen.findByRole("heading", { name: "Ready" });
+    fireEvent.change(screen.getByLabelText("Search work items"), {
+      target: { value: "managed-project" },
+    });
+
+    expect(screen.getByText(/1 visible work items \(6 total\)/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "All1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Ready1" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Blocked0" })).toBeInTheDocument();
+
+    const decisionInbox = screen.getByRole("region", { name: "Decision Inbox" });
+    expect(within(decisionInbox).getByText("0")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Confirm unresolved review ownership"),
+    ).not.toBeInTheDocument();
+  });
+
   it("shows an empty queue state when the API is unavailable", async () => {
     fetchMock.mockRejectedValueOnce(new Error("network down"));
 
@@ -226,6 +254,10 @@ describe("App", () => {
       screen.queryByText("Implement managed-project onboarding"),
     ).not.toBeInTheDocument();
     expect(screen.getAllByText("No work")).toHaveLength(sectionIds.length);
+    expect(fetchMock).toHaveBeenCalledWith(
+      "http://127.0.0.1:8010/queue/workbench",
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
   });
 });
 

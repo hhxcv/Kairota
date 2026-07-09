@@ -201,6 +201,7 @@ class ClaimWorkItemRead(ContractModel):
 class ClaimNextWorkItemCommand(ClaimWorkItemCommand):
     repository_id: str | None = None
     queue_key: str = Field(default="default", min_length=1, max_length=160)
+    max_active_leases: int | None = Field(default=None, ge=1, le=100)
 
 
 class ClaimNextWorkItemRead(ContractModel):

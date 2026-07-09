@@ -11,7 +11,7 @@ from sqlalchemy.orm import Session
 
 from kairota import __version__
 from kairota.adapters.github.client import GitHubHttpClient
-from kairota.config import get_settings
+from kairota.config import DEFAULT_API_HOST, DEFAULT_API_PORT, get_settings
 from kairota.contracts.enums import (
     AutonomyMode,
     RiskLevel,
@@ -33,7 +33,7 @@ from kairota.contracts.schemas import (
     WorkItemCreate,
     WorkItemTriageCommand,
 )
-from kairota.db import create_session_factory
+from kairota.db import create_session_factory, database_url, ensure_database_ready
 from kairota.services.demo_data import seed_m1_demo_data
 from kairota.services.errors import CommandBlockedError
 from kairota.services.github_sync import sync_repository_command
@@ -69,7 +69,9 @@ from kairota.services.worker_runs import (
 
 
 def alembic_config() -> Config:
-    return Config("alembic.ini")
+    config = Config("alembic.ini")
+    config.set_main_option("sqlalchemy.url", database_url())
+    return config
 
 
 def cmd_health(_args: argparse.Namespace) -> int:
@@ -80,6 +82,14 @@ def cmd_health(_args: argparse.Namespace) -> int:
         "version": __version__,
     }
     print(json.dumps(payload, sort_keys=True))
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    import uvicorn
+
+    ensure_database_ready()
+    uvicorn.run("kairota.api.app:app", host=args.host, port=args.port)
     return 0
 
 
@@ -245,6 +255,7 @@ def cmd_queue_claim_next(args: argparse.Namespace) -> int:
         lease_ttl_seconds=args.lease_ttl_seconds,
         repository_id=args.repository_id,
         queue_key=args.queue_key,
+        max_active_leases=args.max_active_leases,
     )
     try:
         with session_scope() as session, session.begin():
@@ -540,6 +551,7 @@ def cmd_sync_repository(args: argparse.Namespace) -> int:
 
 
 def session_scope() -> Session:
+    ensure_database_ready()
     return create_session_factory()()
 
 
@@ -578,6 +590,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     health = subparsers.add_parser("health", help="Print runtime health JSON.")
     health.set_defaults(func=cmd_health)
+
+    serve = subparsers.add_parser("serve", help="Start the local Kairota API.")
+    serve.add_argument("--host", default=DEFAULT_API_HOST)
+    serve.add_argument("--port", type=int, default=DEFAULT_API_PORT)
+    serve.set_defaults(func=cmd_serve)
 
     db_upgrade = subparsers.add_parser("db-upgrade", help="Apply DB migrations.")
     db_upgrade.set_defaults(func=cmd_db_upgrade)
@@ -709,6 +726,7 @@ def build_parser() -> argparse.ArgumentParser:
     queue_claim_next_parser.add_argument("--owner", required=True)
     queue_claim_next_parser.add_argument("--repository-id")
     queue_claim_next_parser.add_argument("--queue-key", default="default")
+    queue_claim_next_parser.add_argument("--max-active-leases", type=int)
     queue_claim_next_parser.add_argument("--lease-ttl-seconds", type=int, default=1800)
     queue_claim_next_parser.set_defaults(func=cmd_queue_claim_next)
 

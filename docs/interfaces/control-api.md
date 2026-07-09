@@ -12,10 +12,11 @@ doc:
 
 Status: mixed current and planned. Health, work item, work-item triage,
 repository registration, queue summary, ready queue, queue workbench,
-repository-scoped claim-next, scheduler cycle, direct claim, lease heartbeat,
-stale lease reconciliation, worker-run lifecycle, GitHub repository sync, GitHub
-webhook, development demo seed, and M1 exit smoke surfaces are implemented. MCP
-and adapter-backed public mutations are not implemented yet.
+repository-scoped claim-next with optional worker cap, scheduler cycle, direct
+claim, lease heartbeat, stale lease reconciliation, worker-run lifecycle, GitHub
+repository sync, GitHub webhook, development demo seed, and M1 exit smoke
+surfaces are implemented. MCP and adapter-backed public mutations are not
+implemented yet.
 
 ## Planned Interfaces
 
@@ -34,8 +35,9 @@ and adapter-backed public mutations are not implemented yet.
 - Return machine-readable reasons for blocked scheduling.
 - Separate read models from mutation commands.
 - Keep adapter-specific payloads out of core contracts.
-- Managed projects configure `KAIROTA_API_BASE_URL` and use REST paths under
-  that base URL.
+- Managed projects use Kairota's built-in default local base URL and use REST
+  paths under that base URL. Non-default deployments may record an explicit
+  override in local project configuration.
 
 ## Implemented REST Surface
 
@@ -68,6 +70,8 @@ and adapter-backed public mutations are not implemented yet.
 `GET /work-items`, `GET /queue/summary`, `GET /queue/workbench`,
 `GET /queue/ready`, `POST /scheduler/cycles`, and `POST /queue/claim-next`
 support repository-scoped scheduling through `repository_id`.
+`POST /queue/claim-next` also accepts `max_active_leases`; when the cap is
+reached it returns `blocked_by_capacity` and does not issue a lease.
 
 Implemented command endpoints record command idempotency in
 `command_requests`. Reusing the same key and payload returns the original
@@ -79,9 +83,10 @@ result; reusing the same key with a different payload returns
 | Command | Status |
 | --- | --- |
 | `health` | implemented |
+| `serve` | implemented; starts the local API with built-in defaults |
 | `db-upgrade` / `db-downgrade` | implemented |
 | `work-items create/list/show/triage/claim` | implemented |
-| `queue summary/workbench/ready/claim-next` | implemented |
+| `queue summary/workbench/ready/claim-next` | implemented; `claim-next` supports `--max-active-leases` |
 | `scheduler run` | implemented; supports `--repository-id` |
 | `leases heartbeat` | implemented |
 | `reconcile leases` | implemented |
@@ -95,10 +100,18 @@ result; reusing the same key with a different payload returns
 
 Managed projects should use the installable skill at
 `skills/kairota-managed-project/SKILL.md`. That skill instructs project-local AI
-agents to configure `KAIROTA_API_BASE_URL`, register their GitHub repository,
-sync or receive issue events, submit triage facts, query ready work, claim
-leases, and report worker progress. Kairota remains the mechanical scheduler;
-dependency analysis and issue interpretation stay with the managed project's AI.
+agents to use the default Kairota API base URL, register their GitHub
+repository, sync or receive issue events, submit triage facts, query ready work,
+claim leases, and report worker progress. Kairota remains the mechanical
+scheduler; dependency analysis and issue interpretation stay with the managed
+project's AI.
+
+The expected operating mode is: a human starts Kairota, registers a managed
+repository, installs the managed-project skill in that repository, and tells the
+repository's main AI to complete issues with Kairota. The main AI syncs current
+facts, triages untriaged issues before scheduling, claims ready work up to the
+project worker cap, assigns workers, and reports worker state back through the
+API.
 
 ## Planned Adapter Set
 

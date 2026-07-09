@@ -37,8 +37,9 @@ npm run test
 npm run build
 ```
 
-Migration baseline is validated by tests. Running migrations against a real
-database requires `KAIROTA_DATABASE_URL`.
+Migration baseline is validated by tests. Normal local use applies migrations
+automatically against Kairota's managed local database. `KAIROTA_DATABASE_URL`
+is an advanced override for a non-default database.
 
 Browser smoke checks cover the queue workbench layout at desktop and mobile
 viewports before PR merge.
@@ -55,11 +56,14 @@ Managed-project dogfood validation is automated by:
 
 ```bash
 python -m pytest tests/test_managed_project_dogfood.py
+python -m pytest tests/test_managed_project_complex_scheduling.py
 ```
 
 This covers repository registration, GitHub issue sync, project-AI triage,
-repository-scoped scheduling, claim-next, worker-run reporting, and scoped
-workbench visibility without requiring network credentials.
+repository-scoped scheduling, capacity-limited claim-next, worker-run reporting,
+and scoped workbench visibility without requiring network credentials. Detailed
+dogfood observations and the opt-in live GitHub check are recorded in
+`docs/validation/managed-project-dogfood.md`.
 
 ## Skill Validation
 

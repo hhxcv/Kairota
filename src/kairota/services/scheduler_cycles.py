@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import cast
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from kairota.contracts.enums import (
@@ -120,6 +120,31 @@ def claim_next_work_item_command(
     def execute() -> JsonObject:
         validate_repository_scope(session, command.repository_id)
         ensure_scheduler_guard(session, command.queue_key)
+        if command.max_active_leases is not None:
+            active_leases = active_lease_count(
+                session,
+                repository_id=command.repository_id,
+            )
+            if active_leases >= command.max_active_leases:
+                cycle = SchedulerCycle(
+                    queue_key=command.queue_key,
+                    repository_id=command.repository_id,
+                    input_version="m1-claim-next-v2",
+                    result="capacity_blocked",
+                    assigned_count=0,
+                    rejected_count=0,
+                )
+                session.add(cycle)
+                session.flush()
+                read_model = ClaimNextWorkItemRead(
+                    claimed=False,
+                    reason=SchedulerDecisionCode.BLOCKED_BY_CAPACITY,
+                    explanation=(
+                        f"Active lease count {active_leases} has reached "
+                        f"max_active_leases {command.max_active_leases}."
+                    ),
+                )
+                return cast(JsonObject, read_model.model_dump(mode="json"))
         candidates = load_plan_candidates(session, repository_id=command.repository_id)
         completed_ids = load_completed_work_item_ids(session)
         active_conflicts = load_active_conflict_keys(session)
@@ -368,9 +393,6 @@ def load_plan_candidates(
             priority=work_item.priority,
             risk=RiskLevel(work_item.risk),
             created_order=index,
-            expected_touch=work_item.expected_touch,
-            acceptance=work_item.acceptance,
-            validation=work_item.validation,
             conflict_keys=conflict_keys.get(work_item.id, frozenset()),
             dependency_ids=dependencies.get(work_item.id, frozenset()),
         )
@@ -379,10 +401,9 @@ def load_plan_candidates(
 
 
 def load_completed_work_item_ids(session: Session) -> frozenset[str]:
-    completed_statuses = (WorkItemStatus.MERGED.value, WorkItemStatus.DONE.value)
     return frozenset(
         session.scalars(
-            select(WorkItem.id).where(WorkItem.status.in_(completed_statuses))
+            select(WorkItem.id).where(WorkItem.status == WorkItemStatus.DONE.value)
         )
     )
 
@@ -400,6 +421,17 @@ def load_active_conflict_keys(session: Session) -> frozenset[str]:
             )
         )
     )
+
+
+def active_lease_count(session: Session, *, repository_id: str | None = None) -> int:
+    statement = select(func.count(Lease.id)).where(
+        Lease.status == LeaseStatus.ACTIVE.value
+    )
+    if repository_id is not None:
+        statement = statement.join(WorkItem, Lease.work_item_id == WorkItem.id).where(
+            WorkItem.repository_id == repository_id
+        )
+    return int(session.scalar(statement) or 0)
 
 
 def validate_repository_scope(session: Session, repository_id: str | None) -> None:

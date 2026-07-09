@@ -21,6 +21,57 @@ def test_health_command_outputs_json(capsys: CaptureFixture[str]) -> None:
     assert payload["version"] == "0.1.0"
 
 
+def test_cli_uses_internal_database_without_explicit_url(
+    tmp_path: Path,
+    monkeypatch: MonkeyPatch,
+    capsys: CaptureFixture[str],
+) -> None:
+    monkeypatch.delenv("KAIROTA_DATABASE_URL", raising=False)
+    monkeypatch.setenv("KAIROTA_DATA_DIR", str(tmp_path))
+    get_settings.cache_clear()
+    try:
+        exit_code = main(
+            [
+                "work-items",
+                "create",
+                "--idempotency-key",
+                "cli-default-db-create",
+                "--title",
+                "CLI default database work",
+            ]
+        )
+    finally:
+        get_settings.cache_clear()
+
+    assert exit_code == 0
+    assert read_json(capsys)["title"] == "CLI default database work"
+    assert (tmp_path / "kairota.sqlite").exists()
+
+
+def test_serve_uses_fixed_defaults(monkeypatch: MonkeyPatch) -> None:
+    prepared: list[bool] = []
+    served: list[dict[str, object]] = []
+
+    def fake_ready() -> None:
+        prepared.append(True)
+
+    def fake_run(app: str, *, host: str, port: int) -> None:
+        served.append({"app": app, "host": host, "port": port})
+
+    monkeypatch.setattr("kairota.cli.ensure_database_ready", fake_ready)
+    monkeypatch.setattr("uvicorn.run", fake_run)
+
+    assert main(["serve"]) == 0
+    assert prepared == [True]
+    assert served == [
+        {
+            "app": "kairota.api.app:app",
+            "host": "127.0.0.1",
+            "port": 8010,
+        }
+    ]
+
+
 @pytest.fixture()
 def cli_database(tmp_path: Path, monkeypatch: MonkeyPatch) -> Iterator[None]:
     db_path = tmp_path / "kairota.sqlite"
@@ -166,6 +217,26 @@ def test_cli_smoke_for_m1_api_wrappers(
     work_item_id = str(created["id"])
     assert second_create_code == 0
     assert created["status"] == "ready"
+
+    assert (
+        main(
+            [
+                "queue",
+                "claim-next",
+                "--idempotency-key",
+                "cli-capped-claim-next",
+                "--owner",
+                "slot-capped",
+                "--repository-id",
+                repository_id,
+                "--max-active-leases",
+                "1",
+            ]
+        )
+        == 2
+    )
+    capped = read_json(capsys)
+    assert capped["reason_code"] == "blocked_by_capacity"
 
     assert main(["work-items", "show", work_item_id]) == 0
     shown = read_json(capsys)

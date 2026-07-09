@@ -15,7 +15,6 @@ from kairota.adapters.github.normalizers import (
     normalize_issue,
     normalize_pull_request,
     normalize_repository,
-    normalize_review_summary,
 )
 from kairota.config import Settings
 
@@ -66,7 +65,6 @@ class GitHubHttpClient:
             normalize_pull_request(payload) for payload in pull_request_payloads
         )
         checks = []
-        reviews = []
         for pull_request in pull_requests:
             if not pull_request.head_sha:
                 continue
@@ -93,30 +91,12 @@ class GitHubHttpClient:
                 for status in statuses
             )
 
-            review_payloads = tuple(
-                self.get_list(f"/repos/{repo_path}/pulls/{pull_request.number}/reviews")
-            )
-            thread_payloads = tuple(
-                self.fetch_review_threads(
-                    repository,
-                    pull_request_number=pull_request.number,
-                )
-            )
-            reviews.append(
-                normalize_review_summary(
-                    pull_request.number,
-                    reviews=review_payloads,
-                    review_threads=thread_payloads,
-                    head_sha_value=pull_request.head_sha,
-                )
-            )
-
         return GitHubSyncSnapshot(
             repository=repository_snapshot,
             issues=issues,
             pull_requests=pull_requests,
             checks=tuple(checks),
-            reviews=tuple(reviews),
+            reviews=(),
             next_cursor=None,
         )
 
@@ -151,51 +131,6 @@ class GitHubHttpClient:
         )
         response.raise_for_status()
         return response.json()
-
-    def fetch_review_threads(
-        self,
-        repository: GitHubRepositoryConfig,
-        *,
-        pull_request_number: int,
-    ) -> tuple[JsonObject, ...]:
-        if not self.token:
-            return ()
-        query = """
-        query PullRequestReviewThreads($owner: String!, $name: String!, $number: Int!) {
-          repository(owner: $owner, name: $name) {
-            pullRequest(number: $number) {
-              reviewThreads(first: 100) {
-                nodes { id isResolved }
-              }
-            }
-          }
-        }
-        """
-        response = httpx.post(
-            f"{self.api_url}/graphql",
-            headers=self.headers,
-            timeout=self.timeout_seconds,
-            json={
-                "query": query,
-                "variables": {
-                    "owner": repository.owner,
-                    "name": repository.name,
-                    "number": pull_request_number,
-                },
-            },
-        )
-        response.raise_for_status()
-        payload = response.json()
-        nodes = (
-            payload.get("data", {})
-            .get("repository", {})
-            .get("pullRequest", {})
-            .get("reviewThreads", {})
-            .get("nodes", [])
-        )
-        if not isinstance(nodes, list):
-            return ()
-        return tuple(node for node in nodes if isinstance(node, dict))
 
     @property
     def headers(self) -> dict[str, str]:

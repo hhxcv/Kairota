@@ -1,6 +1,6 @@
 ---
 doc:
-  updated_at: 2026-07-08
+  updated_at: 2026-07-09
   category: contract
   status: mixed-current-planned
   audience: ai
@@ -22,21 +22,21 @@ issue in the first adapter, but Kairota owns the scheduling facts.
 
 ## Core Facts
 
-| Field | Purpose |
+| Field | Role |
 | --- | --- |
-| Title | Human-readable task name |
-| Status | Queue state for scheduler and UI |
-| Priority | Stable ordering when multiple items are ready |
-| Risk | Review and gate intensity |
-| Work Type | Implementation, docs, test, design, governance, or operations |
-| Dependencies | Work items that must finish before this item can run |
-| Expected Touch | Planned code, docs, contract, or integration areas |
-| Conflict Keys | Logical locks that prevent unsafe parallel writes |
-| Acceptance | Done criteria |
-| Validation | Required checks or evidence |
-| Autonomy Mode | Whether AI may continue without human presence |
-| Repository Id | Optional Kairota repository scope for managed-project scheduling |
-| Source Link | External issue, ticket, or request that originated the item |
+| Status | Scheduler and UI queue state. `ready` is eligible; `done` satisfies dependencies. |
+| Dependencies | Scheduler-critical predecessor work items. |
+| Conflict Keys | Scheduler-critical logical locks for unsafe parallel writes. |
+| Priority | Scheduler ordering when multiple items are eligible. |
+| Risk | Ordering and reporting signal, not an eligibility gate. |
+| Repository Id | Optional scheduler scope for managed-project queues. |
+| Title | Human-readable task name. |
+| Work Type | Reporting and filtering dimension. |
+| Expected Touch | Management and workbench context. |
+| Acceptance | Management and completion-context field. |
+| Validation | Management and evidence field. |
+| Autonomy Mode | Management and policy context. |
+| Source Link | External issue, ticket, or request that originated the item. |
 
 ## Implemented Commands
 
@@ -48,8 +48,10 @@ issue in the first adapter, but Kairota owns the scheduling facts.
 | `POST /work-items/{id}/triage` | Let project AI or a human set scheduling facts after issue analysis. |
 | `kairota work-items create/list/show/triage/claim` | Local CLI access to the same core service layer. |
 
-Triage is explicit. Kairota does not infer dependency edges, expected touch,
-validation, conflict keys, or readiness from issue prose by itself.
+Triage is explicit. Kairota does not infer dependency edges, conflict keys, or
+readiness from issue prose by itself. Expected touch, acceptance, validation,
+risk, work type, and autonomy mode improve reporting and workbench quality, but
+they are not required for scheduler eligibility.
 
 ## Status Model
 
@@ -74,5 +76,7 @@ Blocking states:
 - Repository PRs own code review, checks, and merge state.
 - UI fields may cache external status but must be reconcilable.
 - GitHub sync creates newly discovered issues in `Needs Triage`.
-- Managed project AI analyzes the issue and submits dependency, conflict,
-  acceptance, validation, and readiness facts back to Kairota.
+- GitHub issue close is the current completion signal for synced issue work and
+  moves the work item to `Done`.
+- Managed project AI analyzes the issue and submits dependency, conflict, and
+  readiness facts back to Kairota. Other fields are project-management context.

@@ -1,84 +1,49 @@
 ---
 doc:
-  updated_at: 2026-07-09
+  updated_at: 2026-07-10
   category: validation
   status: current
   audience: ai
   keywords: [validation, checks, baseline]
-  description: "Lists current validation surfaces for the incubating repository."
+  description: "Defines current backend, skill, UI, and dogfood validation."
 ---
 
 # Validation Baseline
 
-## Current Repo State
-
-M1 runtime foundation, core schema/contracts, state machine, pure scheduler
-planner, claim and lease services, REST/CLI surfaces, bounded GitHub issue sync,
-worker run lifecycle commands, repository registration, repository-scoped
-scheduling, patch-like managed-project triage, queue workbench UI, development
-demo seed fixtures, recovery signals, root managed-project skill, dogfood skill
-sync, and M1 exit smoke checks are implemented. MCP is not implemented yet.
-
-## Checks
+## Required Checks
 
 ```bash
-python -m pytest
+pytest -q
 ruff check src tests migrations
 mypy src
 python .agents/checks/check_ai_governance.py
 git diff --check
-```
 
-Frontend:
-
-```bash
 cd web
-npm run test
+npm test
 npm run build
 ```
 
-Migration baseline is validated by tests. Normal local use applies migrations
-automatically against Kairota's managed local database. `KAIROTA_DATABASE_URL`
-is an advanced override for a non-default database.
+Backend tests cover the one-time destructive schema reset, project registration,
+REST-only GitHub normalization, webhook verification/replay, sync failure and
+recovery, all five states, dependency cycles, close/reopen, stale sync, versioned
+claim/release, multi-project API filters, and a 24-Issue dependency graph.
 
-Browser smoke checks cover the queue workbench layout at desktop and mobile
-viewports before PR merge.
-
-M1 exit smoke with development fixture data:
-
-```bash
-kairota demo seed
-kairota queue workbench
-kairota smoke m1-exit
-```
-
-Managed-project dogfood validation is automated by:
-
-```bash
-python -m pytest tests/test_managed_project_dogfood.py
-python -m pytest tests/test_managed_project_complex_scheduling.py
-```
-
-This covers repository registration, GitHub issue sync, project-AI triage,
-repository-scoped scheduling, capacity-limited claim-next, worker-run reporting,
-and scoped workbench visibility without requiring network credentials. Detailed
-dogfood observations and the opt-in live GitHub check are recorded in
-`docs/validation/managed-project-dogfood.md`.
+UI changes additionally require Playwright observation from a user's point of
+view on desktop and mobile. Validate multi-project selection, state counts,
+search, pagination, details, add-project, sync errors, empty data, loading, and
+responsive geometry. Inspect browser console errors and screenshots; component
+tests alone are insufficient.
 
 ## Skill Validation
 
-When creating or editing a skill, run the system skill validator if available:
+The public `skills/kairota-managed-project/SKILL.md` and dogfood copy under
+`.agents/skills/` must be identical. Run the repository governance check and the
+system skill validator after any change.
 
-```bash
-python <skill-creator>/scripts/quick_validate.py .agents/skills/<skill-name>
-```
+## Live Dogfood
 
-Use the local installed `skill-creator` path for `<skill-creator>`; do not write
-machine-specific paths into public docs.
-
-Kairota public skills under `skills/` must have a matching dogfood copy under
-`.agents/skills/`; `python .agents/checks/check_ai_governance.py` enforces this.
-
-## Future Checks
-
-Add M2 cost and flow checks when cost event ingestion and reporting surfaces land.
+Use Kairota itself as a registered project. Real GitHub Issue scenarios must
+include root work, fan-out, fan-in, blocked work, close, reopen, release, and at
+least one parallel ready wave. Delete or close temporary validation Issues after
+recording evidence; no fake product records may remain.

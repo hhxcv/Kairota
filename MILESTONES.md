@@ -4,96 +4,64 @@
 
 Status: completed.
 
-Goal: establish Kairota as an AI-readable repository before product runtime
-implementation starts.
+Goal: establish Kairota as an AI-readable repository before runtime work.
 
-Done when:
+## Superseded: M1 AI Dev Queue Prototype
 
-- Root rules exist in `AGENTS.md`.
-- Durable docs have owner metadata and a routing index.
-- Initial Kairota skills guide docs, briefs, design, review, orchestration, and validation.
-- A lightweight governance check verifies docs and skill basics.
+Status: completed, then intentionally simplified.
 
-Out of scope:
+The prototype explored generic work items, leases, locks, worker runs, and
+repository gates. M1.9 validation showed that these concepts duplicated the
+single main AI's worker management and made Issue scheduling harder to operate.
+The destructive M1.9 reset removes that schema and behavior; no compatibility or
+data migration is required.
 
-- Product backend, frontend, scheduler, database schema, worker runtime, or API implementation.
-- Public release packaging.
-
-## Completed: M1 AI Dev Queue MVP
+## Completed: M1.9 Managed Project Issue Scheduling
 
 Status: completed.
 
-Goal: replace GitHub Project for AI development scheduling while keeping the
-core model repository-provider neutral.
+Goal: provide reliable mechanical scheduling for other GitHub projects while
+using Kairota itself as the end-to-end validation project.
 
 Expected capabilities:
 
-- Work items with dependencies, risk, priority, expected touch, conflict keys, and status.
-- Deterministic scheduler planning with leases and conflict locks.
-- Worker run records.
-- Repository PR, CI, and review summary sync, with GitHub as the first adapter.
-- UI for ready, blocked, running, waiting, failed, and done work.
-
-## Active: M1.9 Managed Project Dogfood Onboarding
-
-Status: current.
-
-Goal: make Kairota usable as a local service that manages other GitHub
-projects, while eating its own dogfood on Kairota work.
-
-Expected capabilities:
-
-- Register a GitHub repository with Kairota through REST or CLI.
-- Keep synced issues scoped to the registered repository.
-- Let the managed project's AI define dependencies, conflict keys, expected
-  touch, acceptance, validation, priority, risk, and readiness.
-- Query and claim ready work by registered repository.
-- Provide a root `skills/` skill that other projects can install to learn how
-  to use Kairota.
-- Keep a synced dogfood copy of that managed-project skill in `.agents/skills/`.
-- Remove product reliance on fake queue data; UI shows API data or an empty
-  unavailable state.
-- Validate the managed-project loop end to end against Kairota-shaped GitHub
-  issue sync and worker scheduling.
+- Register one or more GitHub projects through the web, REST API, or CLI.
+- Poll all GitHub Issues and accept signed Issue webhooks that trigger exact REST
+  refreshes; do not use GraphQL.
+- Store project-AI dependency analysis and reject missing, cross-project, self,
+  or cyclic dependencies.
+- Compute exactly five states: `needs_analysis`, `blocked`, `ready`,
+  `in_progress`, and `closed`.
+- Treat GitHub Issue `closed` as the only dependency-satisfaction fact.
+- Provide a versioned atomic `ready` to `in_progress` claim and a release command
+  that requires fresh analysis before redispatch.
+- Block claims while project sync is unhealthy or stale.
+- Show all real Issues in a project-filterable human UI with no fixture fallback.
+- Ship `skills/kairota-managed-project` and an identical dogfood copy under
+  `.agents/skills/`.
+- Validate multi-project filtering and a dependency graph of at least 20 Issues,
+  including parallel ready waves, close, reopen, block, release, and recovery.
 
 Out of scope:
 
-- Kairota inferring issue dependencies semantically by itself.
-- Replacing GitHub, CI, git, or repository-specific tests.
-- MCP server exposure.
-- M2 cost and flow analytics.
+- Kairota interpreting Issue meaning or inferring dependencies.
+- Worker/subagent records, worker caps, heartbeat, lease, attempt, execution,
+  resume/requeue, conflict-lock, PR, CI, or review scheduling gates.
+- Replacing GitHub, git, CI, the managed project's main AI, or project tests.
+- Preserving the superseded prototype database.
+- MCP exposure or hosted multi-tenant deployment.
 
-## Planned: M2 Cost And Flow Observability
+## Planned: M2 Project Progress Observability
 
 Status: planned.
 
-Goal: measure and improve AI development cost and throughput.
+Goal: add human project-management views only where they provide measurable
+operational value. PR, CI, review, cost, and flow facts may be shown later, but
+must remain separate from Issue scheduling eligibility.
 
-Expected capabilities:
+## Planned: M3 Cross-Project Experience Hub
 
-- Task duration, worker time, repository review cycle, CI repair count, review count, and retry tracking.
-- Token and model cost ingestion when the upstream tool exposes usage data.
-- Estimated cost fields when exact usage is unavailable.
-- Trend, waste, and optimization views.
+Status: planned.
 
-## Planned: M3 Project Management Center
-
-Goal: become the human-AI coordination surface for active projects.
-
-Expected capabilities:
-
-- Decision inbox.
-- Progress and blocker reports.
-- Project timeline and retrospective records.
-- Agent utilization and quality views.
-
-## Planned: M4 Cross-Project Experience Hub
-
-Goal: collect, evaluate, adapt, and propagate reusable AI development experience
-across projects.
-
-Expected capabilities:
-
-- Pattern, anti-pattern, skill template, governance rule, and postmortem records.
-- Project adoption history.
-- Consultant-style agents that review and advise other projects.
+Goal: collect and adapt reusable AI development practices across projects
+without expanding the scheduler kernel.

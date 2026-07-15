@@ -20,6 +20,7 @@ def get_session(request: Request) -> Iterator[Session]:
         )
     session_factory = cast(sessionmaker[Session], raw_session_factory)
     with session_factory() as session:
+        session.info["request"] = request
         yield session
 
 

@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import re
-import sys
 from pathlib import Path
-
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -32,6 +30,7 @@ LOCAL_INFO_PATTERNS = [
 LEGACY_PROJECT_PATTERNS = [
     re.compile("ha" + "lpha", re.IGNORECASE),
 ]
+PORTABLE_PRODUCT_DEFAULTS = ("http://127.0.0.1:8010",)
 
 
 def rel(path: Path) -> str:
@@ -75,7 +74,15 @@ def check_docs(errors: list[str]) -> None:
     for path in docs:
         text = read_text(path)
         meta = parse_doc_metadata(text)
-        for key in ("updated_at", "category", "status", "audience", "keywords", "description"):
+        required_metadata = (
+            "updated_at",
+            "category",
+            "status",
+            "audience",
+            "keywords",
+            "description",
+        )
+        for key in required_metadata:
             if key not in meta or not meta[key]:
                 fail(errors, path, f"missing doc metadata field: {key}")
         if meta.get("category") not in DOC_CATEGORIES:
@@ -163,8 +170,11 @@ def check_text_hygiene(errors: list[str]) -> None:
             if pattern.search(text):
                 fail(errors, path, "contains copied legacy project name")
                 break
+        hygiene_text = text
+        for allowed in PORTABLE_PRODUCT_DEFAULTS:
+            hygiene_text = hygiene_text.replace(allowed, "<portable-product-default>")
         for pattern in LOCAL_INFO_PATTERNS:
-            if pattern.search(text):
+            if pattern.search(hygiene_text):
                 fail(errors, path, "contains local-only information pattern")
                 break
 

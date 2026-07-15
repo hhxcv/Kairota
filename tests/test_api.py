@@ -1,787 +1,189 @@
 import hashlib
 import hmac
 import json
-from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
-from alembic import command
-from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 
-from kairota.adapters.github.models import (
-    GitHubIssueSnapshot,
-    GitHubRepositoryConfig,
-    GitHubRepositorySnapshot,
-    GitHubSyncOptions,
-    GitHubSyncSnapshot,
-)
 from kairota.api.app import create_app
 from kairota.config import Settings
-from kairota.contracts.enums import (
-    RepositoryIssueState,
-    RepositoryProvider,
-    RepositorySyncMode,
-    WorkItemStatus,
-)
-from kairota.models.records import Repository, WorkItem
 
 
-class FakeGitHubClient:
-    def __init__(self) -> None:
-        self.options: list[GitHubSyncOptions | None] = []
-
-    def fetch_repository_snapshot(
-        self,
-        repository: GitHubRepositoryConfig,
-        cursor: str | None = None,
-        options: GitHubSyncOptions | None = None,
-    ) -> GitHubSyncSnapshot:
-        del repository, cursor
-        self.options.append(options)
-        return GitHubSyncSnapshot(
-            repository=GitHubRepositorySnapshot(
-                provider_repo_id="repo-1",
-                name="owner/repo",
-                default_branch="main",
-            ),
-            issues=(
-                GitHubIssueSnapshot(
-                    number=7,
-                    provider_issue_id="issue-7",
-                    title="Synced issue",
-                    url="https://example.test/issues/7",
-                    state="open",
-                ),
-            ),
-        )
-
-
-def test_healthz_returns_runtime_identity() -> None:
-    app = create_app(Settings(app_name="Kairota Test", auto_migrate=False))
-    response = TestClient(app).get("/healthz")
-
+def register_project(client: TestClient, remote: str = "owner/repo") -> dict[str, Any]:
+    response = client.post(
+        "/projects",
+        headers={"Idempotency-Key": f"register-{remote}"},
+        json={"remote": remote},
+    )
     assert response.status_code == 200
-    payload = response.json()
-    assert payload == {
+    return response.json()
+
+
+def test_health_and_local_cors(api_client: TestClient) -> None:
+    response = api_client.get(
+        "/healthz", headers={"Origin": "http://127.0.0.1:5180"}
+    )
+    assert response.json() == {
         "status": "ok",
         "service": "Kairota Test",
         "version": "0.1.0",
-        "database_identity": payload["database_identity"],
     }
-    assert len(payload["database_identity"]) == 12
-
-
-def test_local_web_origin_is_allowed_by_cors() -> None:
-    app = create_app(Settings(app_name="Kairota Test", auto_migrate=False))
-    response = TestClient(app).get(
-        "/healthz",
-        headers={"Origin": "http://127.0.0.1:5183"},
+    assert response.headers["access-control-allow-origin"] == (
+        "http://127.0.0.1:5180"
     )
 
-    assert response.status_code == 200
-    assert response.headers["access-control-allow-origin"] == "http://127.0.0.1:5183"
 
-
-def test_app_manages_default_database_without_explicit_url(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
+def test_project_issue_analysis_claim_and_release_api(
+    api_client: TestClient, github: Any
 ) -> None:
-    monkeypatch.delenv("KAIROTA_DATABASE_URL", raising=False)
-    monkeypatch.setenv("KAIROTA_DATA_DIR", str(tmp_path))
-    app = create_app(
-        Settings(app_name="Kairota Test"),
-        github_client=FakeGitHubClient(),
+    github.set_issue(1)
+    project = register_project(api_client)
+    sync = api_client.post(
+        f"/projects/{project['id']}/sync",
+        headers={"Idempotency-Key": "sync-1"},
     )
-    client = TestClient(app)
+    assert sync.status_code == 200
+    assert sync.json()["issues_created"] == 1
 
-    response = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "default-db-create"},
-        json={"title": "Default database work"},
-    )
-
-    assert response.status_code == 200
-    assert (tmp_path / "kairota.sqlite").exists()
-
-
-@pytest.fixture()
-def session_factory(tmp_path: Path) -> Iterator[sessionmaker[Session]]:
-    db_path = tmp_path / "kairota.sqlite"
-    db_url = f"sqlite:///{db_path.as_posix()}"
-    config = Config("alembic.ini")
-    config.set_main_option("sqlalchemy.url", db_url)
-    command.upgrade(config, "head")
-
-    engine = create_engine(db_url)
-    try:
-        yield sessionmaker(bind=engine, expire_on_commit=False)
-    finally:
-        engine.dispose()
-
-
-@pytest.fixture()
-def client(session_factory: sessionmaker[Session]) -> TestClient:
-    app = create_app(
-        Settings(app_name="Kairota Test", database_url="sqlite:///test.sqlite"),
-        session_factory=session_factory,
-        github_client=FakeGitHubClient(),
-    )
-    return TestClient(app)
-
-
-def ready_work_item_payload(title: str = "Implement API") -> dict[str, object]:
-    return {
-        "title": title,
-        "status": "ready",
-        "priority": 10,
-        "risk": "medium",
-        "work_type": "implementation",
-        "autonomy_mode": "ai_assisted",
-        "expected_touch": "src/kairota/api/**",
-        "acceptance": "REST contract exists",
-        "validation": "pytest",
-        "conflict_keys": ["runtime:api"],
-    }
-
-
-def create_ready_work_item(client: TestClient, key: str = "create-ready") -> str:
-    response = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": key},
-        json=ready_work_item_payload(),
-    )
-    assert response.status_code == 200
-    return str(response.json()["id"])
-
-
-def register_repository(client: TestClient, key: str = "register-repo") -> str:
-    response = client.post(
-        "/repositories",
-        headers={"Idempotency-Key": key},
-        json={"remote": "https://github.com/owner/repo.git"},
-    )
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["name"] == "owner/repo"
-    return str(payload["id"])
-
-
-def test_work_item_create_replays_same_idempotent_command(
-    client: TestClient,
-) -> None:
-    payload = ready_work_item_payload()
-
-    first = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "same-create"},
-        json=payload,
-    )
-    second = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "same-create"},
-        json=payload,
-    )
-
-    assert first.status_code == 200
-    assert second.status_code == 200
-    assert second.json()["id"] == first.json()["id"]
-    assert second.json()["conflict_keys"] == ["runtime:api"]
-
-
-def test_work_item_create_rejects_idempotency_payload_conflict(
-    client: TestClient,
-) -> None:
-    first = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "conflicting-create"},
-        json=ready_work_item_payload("Original"),
-    )
-    second = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "conflicting-create"},
-        json=ready_work_item_payload("Changed"),
-    )
-
-    assert first.status_code == 200
-    assert second.status_code == 409
-    assert second.json()["reason_code"] == "idempotency_conflict"
-
-
-def test_work_item_create_rejects_unsafe_initial_status(
-    client: TestClient,
-) -> None:
-    response = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "unsafe-status"},
-        json={"title": "Unsafe", "status": "claimed"},
-    )
-
-    assert response.status_code == 409
-    assert response.json()["reason_code"] == "invalid_initial_status"
-
-
-def test_queue_summary_and_work_item_detail(client: TestClient) -> None:
-    work_item_id = create_ready_work_item(client)
-
-    detail = client.get(f"/work-items/{work_item_id}")
-    summary = client.get("/queue/summary")
-
-    assert detail.status_code == 200
-    assert detail.json()["id"] == work_item_id
-    assert summary.status_code == 200
-    assert summary.json()["total"] == 1
-    assert summary.json()["by_status"]["ready"] == 1
-
-
-def test_queue_workbench_endpoint_returns_sections(client: TestClient) -> None:
-    work_item_id = create_ready_work_item(client, "workbench-ready")
-
-    response = client.get("/queue/workbench")
-
-    assert response.status_code == 200
-    payload = response.json()
-    sections = {section["id"]: section for section in payload["sections"]}
-    assert tuple(sections) == (
-        "ready",
-        "running",
-        "blocked",
-        "waiting",
-        "failed",
-        "done",
-    )
-    assert sections["ready"]["count"] == 1
-    assert sections["ready"]["rows"][0]["id"] == work_item_id
-    assert sections["ready"]["rows"][0]["reason_code"] == "ready_for_claim"
-    assert payload["summary"]["by_status"]["ready"] == 1
-
-
-def test_repository_register_list_and_show(client: TestClient) -> None:
-    repository_id = register_repository(client)
-
-    listed = client.get("/repositories")
-    shown = client.get(f"/repositories/{repository_id}")
-
-    assert listed.status_code == 200
-    assert listed.json()[0]["id"] == repository_id
-    assert shown.status_code == 200
-    assert shown.json()["provider_repo_id"] == "owner/repo"
-
-
-def test_triage_and_claim_next_are_repository_scoped(client: TestClient) -> None:
-    repository_id = register_repository(client)
-    unscoped_work_item_id = create_ready_work_item(client, "unscoped-ready")
-    created = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "repo-needs-triage"},
-        json={"title": "Repo issue", "repository_id": repository_id},
-    )
-    assert created.status_code == 200
-    work_item_id = str(created.json()["id"])
-
-    triaged = client.post(
-        f"/work-items/{work_item_id}/triage",
-        headers={"Idempotency-Key": "repo-triage"},
+    page = api_client.get(
+        "/issues",
+        params=[("project_id", project["id"]), ("state", "needs_analysis")],
+    ).json()
+    issue = page["items"][0]
+    assert issue["last_synced_at"].endswith("Z")
+    analyzed = api_client.put(
+        f"/issues/{issue['id']}/analysis",
+        headers={"Idempotency-Key": "analyze-1"},
         json={
-            "status": "ready",
-            "priority": 1,
-            "risk": "medium",
-            "work_type": "implementation",
-            "autonomy_mode": "ai_assisted",
-            "expected_touch": "src/kairota/api/routes.py",
-            "acceptance": "Repository-scoped claim works.",
-            "validation": "pytest tests/test_api.py",
-            "conflict_keys": ["repo:owner/repo:path:src/kairota/api/routes.py"],
+            "expected_analysis_version": issue["analysis_version"],
+            "dependency_issue_numbers": [],
         },
     )
-    ready = client.get(f"/queue/ready?repository_id={repository_id}")
-    claim_next = client.post(
-        "/queue/claim-next",
-        headers={"Idempotency-Key": "repo-claim-next"},
-        json={"owner": "repo-worker", "repository_id": repository_id},
-    )
+    assert analyzed.status_code == 200
+    ready = analyzed.json()
+    assert ready["scheduling_state"] == "ready"
+    assert ready["claimable_now"] is True
 
-    assert triaged.status_code == 200
-    assert triaged.json()["repository_id"] == repository_id
-    assert ready.status_code == 200
-    assert [item["id"] for item in ready.json()] == [work_item_id]
-    assert claim_next.status_code == 200
-    assert claim_next.json()["claimed"] is True
-    assert claim_next.json()["work_item_id"] == work_item_id
-    unscoped_status = client.get(f"/work-items/{unscoped_work_item_id}").json()[
-        "status"
-    ]
-    assert unscoped_status == "ready"
-
-
-def test_triage_patch_preserves_omitted_scheduling_facts(
-    client: TestClient,
-) -> None:
-    dependency = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "triage-patch-dependency"},
-        json={"title": "Dependency", "status": "ready"},
-    )
-    assert dependency.status_code == 200
-    dependency_id = str(dependency.json()["id"])
-    work = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "triage-patch-work"},
-        json={
-            **ready_work_item_payload("Patch triage"),
-            "priority": 12,
-            "dependency_ids": [dependency_id],
-            "conflict_keys": ["runtime:patch"],
-        },
-    )
-    assert work.status_code == 200
-    work_item_id = str(work.json()["id"])
-
-    patched = client.post(
-        f"/work-items/{work_item_id}/triage",
-        headers={"Idempotency-Key": "triage-patch-status"},
-        json={"status": "blocked"},
-    )
-
-    assert patched.status_code == 200
-    payload = patched.json()
-    assert payload["status"] == "blocked"
-    assert payload["priority"] == 12
-    assert payload["acceptance"] == "REST contract exists"
-    assert payload["validation"] == "pytest"
-    assert payload["dependency_ids"] == [dependency_id]
-    assert payload["conflict_keys"] == ["runtime:patch"]
-
-
-def test_claim_next_enforces_repository_worker_cap(client: TestClient) -> None:
-    repository_id = register_repository(client, "register-capped-repo")
-    for index in range(2):
-        response = client.post(
-            "/work-items",
-            headers={"Idempotency-Key": f"capped-ready-{index}"},
-            json={
-                **ready_work_item_payload(f"Capped work {index}"),
-                "repository_id": repository_id,
-                "priority": index,
-                "conflict_keys": [f"repo:owner/repo:path:slot-{index}"],
-            },
-        )
-        assert response.status_code == 200
-
-    first = client.post(
-        "/queue/claim-next",
-        headers={"Idempotency-Key": "capped-claim-1"},
-        json={
-            "owner": "repo-worker-1",
-            "repository_id": repository_id,
-            "max_active_leases": 1,
-        },
-    )
-    second = client.post(
-        "/queue/claim-next",
-        headers={"Idempotency-Key": "capped-claim-2"},
-        json={
-            "owner": "repo-worker-2",
-            "repository_id": repository_id,
-            "max_active_leases": 1,
-        },
-    )
-    summary = client.get(f"/queue/summary?repository_id={repository_id}")
-
-    assert first.status_code == 200
-    assert first.json()["claimed"] is True
-    assert second.status_code == 409
-    assert second.json()["reason_code"] == "blocked_by_capacity"
-    assert summary.status_code == 200
-    assert summary.json()["active_leases"] == 1
-
-
-def test_claim_next_reports_actionable_aggregate_blocker(client: TestClient) -> None:
-    active = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "aggregate-active"},
-        json={
-            **ready_work_item_payload("Active shared work"),
-            "priority": 0,
-            "conflict_keys": ["shared:left-lane"],
-        },
-    )
-    assert active.status_code == 200
-    active_id = str(active.json()["id"])
-    claimed = client.post(
-        f"/work-items/{active_id}/claim",
-        headers={"Idempotency-Key": "aggregate-active-claim"},
-        json={"owner": "slot-active"},
+    claimed = api_client.post(
+        f"/issues/{issue['id']}/claim",
+        headers={"Idempotency-Key": "claim-1"},
+        json={"expected_scheduling_version": ready["scheduling_version"]},
     )
     assert claimed.status_code == 200
-    root = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "aggregate-root"},
-        json={"title": "Unfinished root", "status": "backlog", "priority": 1},
+    running = claimed.json()
+    assert running["scheduling_state"] == "in_progress"
+
+    conflict = api_client.post(
+        f"/issues/{issue['id']}/claim",
+        headers={"Idempotency-Key": "claim-2"},
+        json={"expected_scheduling_version": ready["scheduling_version"]},
     )
-    assert root.status_code == 200
-    root_id = str(root.json()["id"])
-    dependent = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "aggregate-dependent"},
+    assert conflict.status_code == 409
+    assert conflict.json()["reason_code"] == "state_in_progress"
+
+    released = api_client.post(
+        f"/issues/{issue['id']}/release",
+        headers={"Idempotency-Key": "release-1"},
         json={
-            **ready_work_item_payload("Dependency blocked"),
-            "priority": 2,
-            "dependency_ids": [root_id],
-            "conflict_keys": ["independent:dependency"],
+            "expected_scheduling_version": running["scheduling_version"],
+            "reason": "Main AI restart reconciliation.",
         },
     )
-    assert dependent.status_code == 200
-    conflict = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "aggregate-conflict"},
-        json={
-            **ready_work_item_payload("Conflict blocked"),
-            "priority": 3,
-            "conflict_keys": ["shared:left-lane"],
-        },
-    )
-    assert conflict.status_code == 200
-
-    response = client.post(
-        "/queue/claim-next",
-        headers={"Idempotency-Key": "aggregate-claim-next"},
-        json={"owner": "slot-next"},
-    )
-
-    assert response.status_code == 409
-    payload = response.json()
-    assert payload["reason_code"] == "blocked_by_dependency"
-    assert payload["details"]["blocked_counts"]["blocked_by_dependency"] == 1
-    assert payload["details"]["blocked_counts"]["blocked_by_conflict_key"] == 1
-    assert payload["details"]["blocked_counts"]["blocked_by_status"] >= 1
+    assert released.status_code == 200
+    assert released.json()["scheduling_state"] == "needs_analysis"
 
 
-def test_repository_scoped_scheduler_rejects_unknown_repository(
-    client: TestClient,
-) -> None:
-    cycle = client.post(
-        "/scheduler/cycles",
-        headers={"Idempotency-Key": "unknown-repo-cycle"},
-        json={"repository_id": "missing-repository"},
-    )
-    claim_next = client.post(
-        "/queue/claim-next",
-        headers={"Idempotency-Key": "unknown-repo-claim-next"},
-        json={"repository_id": "missing-repository", "owner": "slot-1"},
-    )
-
-    assert cycle.status_code == 409
-    assert cycle.json()["reason_code"] == "repository_not_found"
-    assert claim_next.status_code == 409
-    assert claim_next.json()["reason_code"] == "repository_not_found"
-
-
-def test_scheduler_cycle_records_decisions(client: TestClient) -> None:
-    work_item_id = create_ready_work_item(client)
-
-    response = client.post(
-        "/scheduler/cycles",
-        headers={"Idempotency-Key": "cycle-1"},
-        json={"queue_key": "default", "capacity": 1},
-    )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert payload["assigned_count"] == 1
-    assert payload["decisions"][0]["work_item_id"] == work_item_id
-    assert payload["decisions"][0]["code"] == "assigned"
-
-
-def test_dependencies_are_satisfied_by_done_not_merged(
-    client: TestClient,
+def test_issue_list_supports_multi_project_multi_state_and_pagination(
+    api_client: TestClient,
     session_factory: sessionmaker[Session],
+    github: Any,
 ) -> None:
-    root = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "dependency-root"},
-        json={
-            **ready_work_item_payload("Root dependency"),
-            "conflict_keys": ["root:dependency"],
-        },
+    github.set_issue(1)
+    github.set_issue(2, state="closed")
+    first = register_project(api_client)
+    api_client.post(
+        f"/projects/{first['id']}/sync",
+        headers={"Idempotency-Key": "sync-filter"},
     )
-    assert root.status_code == 200
-    root_id = str(root.json()["id"])
-    dependent = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "dependency-child"},
-        json={
-            **ready_work_item_payload("Dependent work"),
-            "dependency_ids": [root_id],
-            "conflict_keys": ["dependent:work"],
-        },
-    )
-    assert dependent.status_code == 200
-    dependent_id = str(dependent.json()["id"])
+    second = register_project(api_client, "other/repo")
 
-    with session_factory() as session, session.begin():
-        root_record = session.get(WorkItem, root_id)
-        assert root_record is not None
-        root_record.status = WorkItemStatus.MERGED.value
-
-    merged_plan = client.post(
-        "/scheduler/cycles",
-        headers={"Idempotency-Key": "dependency-merged-plan"},
-        json={"capacity": 2},
-    )
-    assert merged_plan.status_code == 200
-    merged_decisions = {
-        decision["work_item_id"]: decision["code"]
-        for decision in merged_plan.json()["decisions"]
-    }
-    assert merged_decisions[root_id] == "blocked_by_status"
-    assert merged_decisions[dependent_id] == "blocked_by_dependency"
-
-    with session_factory() as session, session.begin():
-        root_record = session.get(WorkItem, root_id)
-        assert root_record is not None
-        root_record.status = WorkItemStatus.DONE.value
-
-    done_plan = client.post(
-        "/scheduler/cycles",
-        headers={"Idempotency-Key": "dependency-done-plan"},
-        json={"capacity": 2},
-    )
-    assert done_plan.status_code == 200
-    done_decisions = {
-        decision["work_item_id"]: decision["code"]
-        for decision in done_plan.json()["decisions"]
-    }
-    assert done_decisions[root_id] == "blocked_by_status"
-    assert done_decisions[dependent_id] == "assigned"
-
-
-def test_claim_blocked_response_is_machine_readable(client: TestClient) -> None:
-    response = client.post(
-        "/work-items",
-        headers={"Idempotency-Key": "create-needs-triage"},
-        json={"title": "Needs triage"},
+    response = api_client.get(
+        "/issues",
+        params=[
+            ("project_id", first["id"]),
+            ("project_id", second["id"]),
+            ("state", "needs_analysis"),
+            ("state", "closed"),
+            ("page", "1"),
+            ("page_size", "1"),
+        ],
     )
     assert response.status_code == 200
-    work_item_id = str(response.json()["id"])
-
-    claim = client.post(
-        f"/work-items/{work_item_id}/claim",
-        headers={"Idempotency-Key": "claim-blocked"},
-        json={"owner": "slot-1"},
-    )
-
-    assert claim.status_code == 409
-    assert claim.json()["status"] == "blocked"
-    assert claim.json()["reason_code"] == "blocked_by_status"
+    page = response.json()
+    assert page["total"] == 2
+    assert len(page["items"]) == 1
+    assert page["by_state"]["needs_analysis"] == 1
+    assert page["by_state"]["closed"] == 1
 
 
-def test_claim_and_heartbeat_success(client: TestClient) -> None:
-    work_item_id = create_ready_work_item(client)
-
-    claim = client.post(
-        f"/work-items/{work_item_id}/claim",
-        headers={"Idempotency-Key": "claim-ready"},
-        json={"owner": "slot-1"},
-    )
-    assert claim.status_code == 200
-    lease_id = claim.json()["lease_id"]
-    fencing_token = claim.json()["fencing_token"]
-
-    heartbeat = client.post(
-        f"/leases/{lease_id}/heartbeat",
-        headers={"Idempotency-Key": "heartbeat-1"},
-        json={"fencing_token": fencing_token},
-    )
-
-    assert heartbeat.status_code == 200
-    assert heartbeat.json()["refreshed"] is True
-
-
-def test_worker_run_endpoints_enforce_lease_authority(client: TestClient) -> None:
-    work_item_id = create_ready_work_item(client, "create-worker-run")
-    claim = client.post(
-        f"/work-items/{work_item_id}/claim",
-        headers={"Idempotency-Key": "claim-worker-run"},
-        json={"owner": "slot-1"},
-    )
-    assert claim.status_code == 200
-    lease_id = claim.json()["lease_id"]
-    fencing_token = claim.json()["fencing_token"]
-
-    created = client.post(
-        "/worker-runs",
-        headers={"Idempotency-Key": "worker-run-create"},
-        json={
-            "work_item_id": work_item_id,
-            "lease_id": lease_id,
-            "fencing_token": fencing_token,
-        },
-    )
-    assert created.status_code == 200
-    worker_run_id = created.json()["id"]
-    assert created.json()["status"] == "running"
-    assert created.json()["started_at"] is not None
-
-    detail = client.get(f"/worker-runs/{worker_run_id}")
-    assert detail.status_code == 200
-    assert detail.json()["lease_id"] == lease_id
-
-    stale = client.post(
-        f"/worker-runs/{worker_run_id}/heartbeat",
-        headers={"Idempotency-Key": "worker-run-stale-heartbeat"},
-        json={"fencing_token": "stale-token"},
-    )
-    assert stale.status_code == 409
-    assert stale.json()["reason_code"] == "invalid_fencing_token"
-
-    report = client.post(
-        f"/worker-runs/{worker_run_id}/report",
-        headers={"Idempotency-Key": "worker-run-report"},
-        json={
-            "fencing_token": fencing_token,
-            "validation": {"pytest": "passed"},
-            "public_mutations": {"pr": 7},
-        },
-    )
-    assert report.status_code == 200
-    assert report.json()["status"] == "reporting"
-    assert report.json()["validation"]["pytest"] == "passed"
-
-    closed = client.post(
-        f"/worker-runs/{worker_run_id}/close",
-        headers={"Idempotency-Key": "worker-run-close"},
-        json={"fencing_token": fencing_token, "result": "blocked"},
-    )
-    assert closed.status_code == 200
-    assert closed.json()["status"] == "closed"
-    assert closed.json()["result"] == "blocked"
-    assert client.get(f"/work-items/{work_item_id}").json()["status"] == "blocked"
-
-
-def test_repository_sync_uses_github_adapter(
-    client: TestClient,
-    session_factory: sessionmaker[Session],
+def test_webhook_refreshes_exact_issue_and_replays_delivery(
+    api_client: TestClient, github: Any
 ) -> None:
-    with session_factory() as session, session.begin():
-        repository = Repository(
-            provider=RepositoryProvider.GITHUB.value,
-            provider_repo_id="repo-1",
-            name="owner/repo",
-            default_branch="main",
-            sync_status="unknown",
-        )
-        session.add(repository)
-        session.flush()
-        repository_id = repository.id
-
-    response = client.post(
-        f"/repositories/{repository_id}/sync",
-        headers={"Idempotency-Key": "api-sync"},
+    github.set_issue(7)
+    project = register_project(api_client)
+    api_client.post(
+        f"/projects/{project['id']}/sync",
+        headers={"Idempotency-Key": "sync-webhook"},
     )
-
-    assert response.status_code == 200
-    assert response.json()["issues_seen"] == 1
-    assert response.json()["work_items_created"] == 1
-    assert client.get("/work-items").json()[0]["repository_id"] == repository_id
-
-
-def test_repository_sync_accepts_json_issue_filter_options(
-    session_factory: sessionmaker[Session],
-) -> None:
-    github_client = FakeGitHubClient()
-    app = create_app(
-        Settings(app_name="Kairota Test", database_url="sqlite:///test.sqlite"),
-        session_factory=session_factory,
-        github_client=github_client,
-    )
-    client = TestClient(app)
-    with session_factory() as session, session.begin():
-        repository = Repository(
-            provider=RepositoryProvider.GITHUB.value,
-            provider_repo_id="repo-1",
-            name="owner/repo",
-            default_branch="main",
-            sync_status="unknown",
-        )
-        session.add(repository)
-        session.flush()
-        repository_id = repository.id
-
-    response = client.post(
-        f"/repositories/{repository_id}/sync",
-        headers={"Idempotency-Key": "api-sync-issue-options"},
-        json={
-            "mode": "issues",
-            "issue_state": "open",
-            "labels": ["kairota"],
-            "max_pages": 1,
-        },
-    )
-
-    assert response.status_code == 200
-    assert github_client.options[0] is not None
-    assert github_client.options[0].mode == RepositorySyncMode.ISSUES
-    assert github_client.options[0].issue_state == RepositoryIssueState.OPEN
-    assert github_client.options[0].labels == ("kairota",)
-    assert github_client.options[0].max_pages == 1
-
-
-def test_github_webhook_route_verifies_signature(
-    session_factory: sessionmaker[Session],
-) -> None:
-    app = create_app(
-        Settings(
-            app_name="Kairota Test",
-            database_url="sqlite:///test.sqlite",
-            github_webhook_secret="secret",
-        ),
-        session_factory=session_factory,
-        github_client=FakeGitHubClient(),
-    )
-    client = TestClient(app)
+    github.set_issue(7, state="closed")
     payload = json.dumps(
         {
-            "action": "opened",
+            "action": "closed",
             "repository": {
-                "id": 123,
+                "id": github.provider_repo_id,
                 "full_name": "owner/repo",
-                "default_branch": "main",
             },
-            "issue": {
-                "id": 456,
-                "number": 7,
-                "title": "Webhook issue",
-                "html_url": "https://example.test/issues/7",
-                "state": "open",
-            },
-        },
-        sort_keys=True,
-    ).encode("utf-8")
-    signature = hmac.new(b"secret", payload, hashlib.sha256).hexdigest()
+            "issue": {"number": 7, "state": "open"},
+        }
+    ).encode()
+    signature = "sha256=" + hmac.new(
+        b"test-secret", payload, hashlib.sha256
+    ).hexdigest()
+    headers = {
+        "X-GitHub-Event": "issues",
+        "X-GitHub-Delivery": "delivery-7",
+        "X-Hub-Signature-256": signature,
+        "Content-Type": "application/json",
+    }
 
-    invalid = client.post(
-        "/webhooks/github",
-        content=payload,
-        headers={
-            "X-GitHub-Event": "issues",
-            "X-GitHub-Delivery": "delivery-invalid",
-            "X-Hub-Signature-256": "sha256=wrong",
-        },
-    )
-    valid = client.post(
-        "/webhooks/github",
-        content=payload,
-        headers={
-            "X-GitHub-Event": "issues",
-            "X-GitHub-Delivery": "delivery-valid",
-            "X-Hub-Signature-256": f"sha256={signature}",
-        },
-    )
+    first = api_client.post("/webhooks/github", content=payload, headers=headers)
+    replay = api_client.post("/webhooks/github", content=payload, headers=headers)
 
-    assert invalid.status_code == 401
-    assert invalid.json()["reason_code"] == "invalid_github_signature"
-    assert valid.status_code == 200
-    assert valid.json()["work_items_created"] == 1
+    assert first.status_code == 200
+    assert first.json()["replayed"] is False
+    assert replay.json()["replayed"] is True
+    assert github.calls[-1] == ("owner/repo", (7,))
+    issue = api_client.get("/issues").json()["items"][0]
+    assert issue["scheduling_state"] == "closed"
+
+
+def test_writes_require_idempotency_key(api_client: TestClient) -> None:
+    response = api_client.post("/projects", json={"remote": "owner/repo"})
+    assert response.status_code == 400
+    assert response.json()["reason_code"] == "missing_idempotency_key"
+
+
+def test_default_database_is_internal_and_auto_migrated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    github: Any,
+) -> None:
+    monkeypatch.setenv("KAIROTA_DATA_DIR", str(tmp_path))
+    settings = Settings(auto_migrate=True)
+    app = create_app(settings, github_client=github, start_background_sync=False)
+    with TestClient(app) as client:
+        assert client.get("/healthz").status_code == 200
+    assert (tmp_path / "kairota.sqlite").exists()

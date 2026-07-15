@@ -1,249 +1,135 @@
 # Kairota
 
-Kairota is a planned personal AI work control plane.
+Kairota is a local scheduling service for AI-developed GitHub projects. It keeps
+GitHub Issue facts synchronized, stores dependency analysis supplied by each
+project's main AI, computes ready work, and gives humans one UI for project
+progress.
 
-The first product slice replaces GitHub Project as the durable scheduler for
-AI-assisted development. GitHub is the first adapter, not the architecture
-boundary. Kairota will own work items, dependencies, claims, leases, conflict
-locks, worker runs, repository check summaries, and a compact UI that shows what
-is ready, blocked, running, waiting, or done.
+Kairota is deliberately mechanical. It does not analyze Issue meaning, run
+subagents, enforce a worker cap, or use PR, CI, review, lease, attempt, or worker
+state for scheduling. The managed project's single main AI owns those concerns.
 
-Future slices may add cost monitoring, project-management surfaces, cross-project
-experience sharing, and consultant-style agents.
+## Scheduling Model
 
-## Status
+Every synced Issue has one of five states:
 
-M1 AI Dev Queue MVP is implemented. Current runtime code includes the FastAPI
-API, CLI, Alembic migrations, Vite React queue workbench, core database schema,
-Pydantic contracts, work item state machine, deterministic scheduler planner,
-claim/lease/conflict-lock services, worker run lifecycle, GitHub sync boundary,
-repository registration, repository-scoped ready queues, worker reporting, M1
-exit smoke checks, and queue recovery signals.
+| State | Meaning |
+| --- | --- |
+| `needs_analysis` | The main AI must submit the Issue's dependency analysis. |
+| `blocked` | At least one dependency Issue is open, or analysis has a manual hold. |
+| `ready` | Analysis is complete and every dependency Issue is closed. |
+| `in_progress` | The main AI atomically claimed the Issue and assigned its work. |
+| `closed` | GitHub reports the Issue closed; downstream dependencies are satisfied. |
 
-M1.9 managed-project dogfood onboarding is active. Kairota now runs as a local
-service that other projects can register with, while the managed project's AI
-uses `skills/kairota-managed-project` to triage synced issues, define
-dependencies and conflict keys, query ready work, claim leases, and report worker
-progress. `claim-next` accepts a project worker cap so managed-project AI loops
-can avoid over-dispatching workers. The UI renders API data or an empty
-unavailable state; product code no longer falls back to fake queue data. Demo
-seed data remains a development fixture only.
+`ready -> in_progress` is the only claim transition. GitHub close produces
+`closed`. Reopening or releasing an Issue invalidates its old dependency
+analysis and returns it to `needs_analysis`.
 
-## Current Commands
+## Install And Run
+
+Requirements: Python 3.11+ and Node.js for the web UI.
 
 ```bash
 python -m pip install -e ".[dev]"
-python -m pytest
-ruff check src tests migrations
-mypy src
-kairota health
 kairota serve
-kairota repositories register --remote <github-owner>/<github-repo> --idempotency-key <key>
-kairota sync repository <repository-id> --idempotency-key <key>
-kairota work-items triage <work-item-id> --idempotency-key <key>
-kairota queue ready --repository-id <repository-id>
-kairota queue claim-next --repository-id <repository-id> --owner <worker> --max-active-leases <cap> --idempotency-key <key>
-kairota queue workbench
-kairota smoke m1-exit
-python .agents/checks/check_ai_governance.py
-git diff --check
 ```
 
-Opt-in live GitHub dogfood validation creates and closes temporary issues:
+Kairota listens at `http://127.0.0.1:8010`. It creates and upgrades its internal
+SQLite database automatically. Normal users do not configure a database URL or
+run migrations.
 
-```bash
-python .agents/checks/live_github_dogfood.py --repo <github-owner>/<github-repo>
-```
-
-Frontend:
+In a second terminal:
 
 ```bash
 cd web
 npm install
-npm run test
+npm run dev
+```
+
+The web app uses the fixed local API URL without Vite configuration. Add the
+first project from the UI or with:
+
+```bash
+kairota projects register <github-owner>/<github-repo>
+```
+
+`KAIROTA_GITHUB_TOKEN` is optional for public repositories and needed for private
+repositories or higher API limits. `KAIROTA_GITHUB_WEBHOOK_SECRET` is optional;
+polling remains the repair and convergence path.
+
+## Use From Another Project
+
+1. Start Kairota and its web UI.
+2. Add the GitHub project in Kairota. The service immediately owns sync and
+   scheduling records for that project.
+3. Install `skills/kairota-managed-project/` into the managed project's AI skill
+   location.
+4. Tell that project's main AI: "Use the Kairota managed-project skill and
+   complete this repository's Issues."
+
+The main AI then performs this loop:
+
+1. Find the registered project and refresh GitHub facts.
+2. Reconcile every `in_progress` Issue with the subagents it currently owns.
+3. If any open Issue is `needs_analysis`, analyze the graph and submit dependency
+   Issue numbers before dispatching new work.
+4. Query claimable `ready` Issues, apply its own worker cap, atomically claim the
+   selected Issues, and assign subagents.
+5. Validate completed work and close the corresponding GitHub Issue. Kairota's
+   webhook or polling sync moves it to `closed` and may unlock dependents.
+6. Release an `in_progress` Issue when the main AI can no longer confirm active
+   ownership; it must be analyzed again before another claim.
+
+Subagents never call Kairota directly.
+
+## REST Examples
+
+Register and sync a project:
+
+```bash
+curl -X POST "http://127.0.0.1:8010/projects" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: register-owner-repo" \
+  -d '{"remote":"<github-owner>/<github-repo>"}'
+
+curl -X POST "http://127.0.0.1:8010/projects/<project-id>/sync" \
+  -H "Idempotency-Key: sync-owner-repo-1"
+```
+
+Analyze and claim an Issue:
+
+```bash
+curl -X PUT "http://127.0.0.1:8010/issues/<issue-id>/analysis" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: analyze-<issue-id>-v0" \
+  -d '{"expected_analysis_version":0,"dependency_issue_numbers":[12,18]}'
+
+curl "http://127.0.0.1:8010/issues?project_id=<project-id>&state=ready&claimable=true"
+
+curl -X POST "http://127.0.0.1:8010/issues/<issue-id>/claim" \
+  -H "Content-Type: application/json" \
+  -H "Idempotency-Key: claim-<issue-id>-v1" \
+  -d '{"expected_scheduling_version":1}'
+```
+
+Every write requires an `Idempotency-Key`. Reuse the same key only when retrying
+the same logical command with the same body. On a version conflict, re-read the
+Issue before deciding again.
+
+## Validation
+
+```bash
+pytest -q
+ruff check src tests migrations
+mypy src
+python .agents/checks/check_ai_governance.py
+git diff --check
+
+cd web
+npm test
 npm run build
 ```
 
-Advanced migration command:
-
-```bash
-alembic upgrade head
-```
-
-Normal local use does not run this manually. Kairota applies migrations
-automatically before database access.
-
-Local API service:
-
-```bash
-kairota serve
-```
-
-Kairota uses an internally managed local SQLite database by default and applies
-migrations automatically before database access. `KAIROTA_DATABASE_URL` and
-manual `alembic` commands are advanced maintenance overrides, not normal setup.
-
-The default local API base URL is built into Kairota. Managed projects and the
-web app use that default unless an advanced deployment overrides it. The API
-allows common local Vite origins by default; override
-`KAIROTA_CORS_ALLOW_ORIGINS` with a JSON array only when the web app runs from a
-non-default local origin.
-
-## Use Kairota From Another Project
-
-Use this flow when a separate GitHub repository wants Kairota to schedule its
-issues.
-
-1. Prepare and start the Kairota service.
-
-   ```bash
-   python -m pip install -e ".[dev]"
-   kairota serve
-   ```
-
-   Normal local use does not require a database URL or manual migration.
-   Kairota stores scheduler state in its own local database and migrates it
-   automatically. Optional environment:
-
-   - `KAIROTA_GITHUB_TOKEN`: GitHub token for repository sync.
-   - `KAIROTA_DATABASE_URL`: advanced override for the managed database.
-   - `KAIROTA_CORS_ALLOW_ORIGINS`: advanced override for non-default web origins.
-
-2. Start the web UI for human progress review.
-
-   ```bash
-   cd web
-   npm install
-   npm run dev
-   ```
-
-   The web UI uses Kairota's built-in default API base URL.
-
-3. Install the managed-project skill into the other project.
-
-   Copy `skills/kairota-managed-project/` into the managed project's AI skill
-   location, or install it through the agent runtime's configured skill
-   mechanism. The synced dogfood copy in `.agents/skills/kairota-managed-project/`
-   is for Kairota's own development agents.
-
-4. Configure the managed project.
-
-   The managed-project skill assumes Kairota's built-in default API base URL.
-   Record an explicit service URL only for a non-default Kairota deployment.
-   Choose and record a project worker cap, for example `<worker-cap>`. Keep the
-   returned `repository_id` in local ignored project notes or handoff context;
-   workers need it for scoped queries and claims.
-
-5. Register the managed GitHub repository once.
-
-   ```bash
-   curl -X POST "<default-kairota-api-base-url>/repositories" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: <stable-register-key>" \
-     -d '{"remote":"<github-owner>/<github-repo>"}'
-   ```
-
-   Equivalent local CLI command when running inside the trusted Kairota
-   environment:
-
-   ```bash
-   kairota repositories register --remote <github-owner>/<github-repo> \
-     --idempotency-key <stable-register-key>
-   ```
-
-6. Sync GitHub issues into Kairota.
-
-   ```bash
-   curl -X POST "<default-kairota-api-base-url>/repositories/<repository-id>/sync" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: <stable-sync-key>" \
-     -d '{"mode":"issues","issue_state":"open","max_pages":1}'
-   ```
-
-   Use `mode=issues` for managed-project onboarding. It syncs bounded GitHub
-   issues without fetching repository-wide pull requests, checks, or review
-   summaries. Optional filters include `labels`, `issue_numbers`, `since`,
-   `issue_state`, and `max_pages`. GitHub webhook intake is implemented, but
-   true external delivery requires an environment with a reachable webhook
-   endpoint. Polling sync is the local default.
-
-7. Tell the managed project's main AI to start completing issues with Kairota.
-
-   The normal user prompt is: use the installed Kairota managed-project skill to
-   complete this repository's GitHub issues. From that point, the managed
-   project's main AI owns the loop. It reads project instructions, syncs current
-   issue facts, checks whether issues already have Kairota triage facts, and
-   only starts scheduling after dependencies and conflict keys are understood.
-
-8. Let the managed project's main AI triage synced issues when needed.
-
-   The managed project's AI, not Kairota, analyzes issue meaning and defines
-   dependencies, conflict keys, readiness, priority, risk, expected touch,
-   acceptance, and validation. Submit those facts through triage:
-
-   ```bash
-   curl -X POST "<default-kairota-api-base-url>/work-items/<work-item-id>/triage" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: <stable-triage-key>" \
-     -d '{"status":"ready","dependency_ids":["<dependency-work-item-id>"],"conflict_keys":["<stable-conflict-key>"],"expected_touch":"<paths-or-surfaces>","acceptance":"<observable done condition>","validation":"<checks to run>"}'
-   ```
-
-   Scheduler gates are intentionally small: status `ready`, all dependency work
-   items `done`, remaining worker capacity, and no active conflict-key lock.
-   Review, CI, expected touch, acceptance, validation, risk, and work type are
-   management facts, not dependency-satisfaction gates. Triage updates are
-   patch-like: omitted fields preserve existing scheduling facts. Send an empty
-   list only when a dependency or conflict list should be cleared.
-
-9. Query and claim ready work with the project worker cap.
-
-   ```bash
-   curl "<default-kairota-api-base-url>/queue/ready?repository_id=<repository-id>"
-
-   curl -X POST "<default-kairota-api-base-url>/queue/claim-next" \
-     -H "Content-Type: application/json" \
-     -H "Idempotency-Key: <stable-claim-key>" \
-     -d '{"repository_id":"<repository-id>","owner":"<agent-or-worker-id>","max_active_leases":<worker-cap>}'
-   ```
-
-   If the claim response is `blocked_by_capacity`, do not start another worker.
-   Wait for an active lease to close or expire, then claim again with a fresh
-   idempotency key.
-
-10. Run the worker under the lease and report progress.
-
-   Create a worker run with the claimed `work_item_id`, `lease_id`, and
-   `fencing_token`. Report validation evidence, public mutations, PR links, CI
-   state, review comments, or blockers through the worker-run endpoints. Close
-   the worker run to release the lease and conflict locks.
-
-11. Complete work.
-
-    For synced GitHub issue work, the dependency-satisfying completion signal is
-    the GitHub issue becoming closed and Kairota syncing that issue to `done`.
-    Closing a PR, receiving review comments, or passing CI can be recorded for
-    project management, but those facts do not satisfy downstream dependencies.
-    For non-PR work, close the worker run with result `done` under the active
-    lease and fencing token; Kairota can transition that work item to `done`
-    without waiting for a linked PR.
-
-12. Repeat until no issue can progress.
-
-    The main AI continues querying ready work and assigning workers up to the
-    recorded cap. If only untriaged issues remain, it returns to dependency
-    analysis. If only blocked or capacity-limited issues remain, it reports the
-    exact reason instead of inventing work.
-
-13. Keep humans on the web workbench.
-
-    Humans use the web UI to watch ready, running, blocked, waiting, failed, and
-    done work, plus decision inbox and recovery signals. The managed project's
-    AI remains responsible for issue interpretation and worker assignment.
-
-## Docs
-
-Start with `docs/README.md`.
-
-Durable project facts live in `docs/`. AI workflows live in `.agents/skills/`.
-Installable managed-project skills live in `skills/`. Root invariants live in
-`AGENTS.md`.
+Start with `docs/README.md` for durable architecture, contracts, and validation
+evidence. Installable project guidance lives in `skills/`; Kairota's identical
+dogfood copy lives in `.agents/skills/`.

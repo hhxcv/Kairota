@@ -1,124 +1,75 @@
 ---
 doc:
-  updated_at: 2026-07-09
+  updated_at: 2026-07-10
   category: validation
   status: current
   audience: ai
-  keywords: [validation, dogfood, managed-project, scheduler, github]
-  description: "Records managed-project dogfood validation coverage and observations."
+  keywords: [dogfood, managed-project, dependency-graph]
+  description: "Records the current complex managed Issue validation design."
 ---
 
-# Managed Project Dogfood Validation
+# Managed Project Dogfood
 
-## Purpose
+## Scenario
 
-Kairota must work as a local control plane for other repositories, not as a
-single-project demo. Validation therefore needs to cover repository registration,
-GitHub issue sync, managed-project AI triage facts, scheduler decisions,
-capacity-limited claiming, worker-run reporting, and workbench visibility.
+The automated complex case contains 24 Issues in four layers:
 
-## Current Automated Coverage
+- Issues 1-4 are independent roots.
+- Issues 5-12 fan out across one or two roots.
+- Issues 13-20 combine second-layer work.
+- Issues 21-23 fan in, and Issue 24 is the final fan-in.
 
-`tests/test_managed_project_dogfood.py` covers the smallest managed-project loop:
-register, sync one issue, triage, plan, claim, create a worker run, report, close
-blocked, and read the scoped workbench.
+The test's main-AI harness owns a worker cap of four. It queries all ready Issues,
+claims at most four, simulates validated completion by closing those GitHub Issue
+facts, synchronizes them, and repeats until all 24 are closed. Kairota never
+stores or enforces that cap.
 
-`tests/test_managed_project_complex_scheduling.py` covers a 24 issue graph
-through the GitHub sync boundary. It verifies:
+## Invariants Observed By Automation
 
-- four parallel worker claims under `max_active_leases=4`;
-- a fifth claim rejected with `blocked_by_capacity`;
-- dependency blocking across multiple upstream issues;
-- conflict-key blocking, including fallback conflict keys;
-- expected touch, acceptance, and validation as metadata-only fields;
-- backlog, blocked, and human-decision statuses;
-- worker-run reporting, blocked close, lease release, and replacement claim.
+- New open Issues start in `needs_analysis`.
+- Analyzed roots become ready in parallel; dependent Issues remain blocked.
+- Closing roots unlocks only Issues whose complete dependency set is closed.
+- At least one dispatch wave contains four Issues.
+- All 24 Issues eventually reach `closed` without duplicate dispatch.
+- Reopen invalidates the reopened Issue's analysis and re-blocks dependents.
+- Release invalidates active work and requires fresh analysis.
+- Sync error or staleness preserves visibility but prevents claim.
+- Project filters and dependency lookup remain project-local.
 
-`tests/test_api.py::test_claim_next_enforces_repository_worker_cap` and the CLI
-smoke test cover the capacity contract at the API and local command surfaces.
+## Runtime Evidence
 
-## Live GitHub Observations
+Kairota was registered as its own real GitHub project after the destructive
+database reset. The first synchronization read 201 real Issues with no product
+fixtures. The live complex run reused temporary Issues #188-#211:
 
-A live dogfood attempt using temporary GitHub issues found these issues:
+- Reopening all 24 produced exactly 24 `needs_analysis` rows.
+- Submitting the graph produced 4 ready roots and 20 blocked dependents.
+- The main AI claimed four roots and assigned four parallel subagents. Each
+  subagent read its Issue and reported completion only to the main AI.
+- Closing the roots produced eight ready second-layer Issues.
+- #195 simulated subagent startup failure: release returned `needs_analysis`,
+  fresh analysis returned `ready`, and a new versioned claim succeeded.
+- #188 was closed and immediately reopened between polls. Polling correctly saw
+  only the final open fact, so the main AI reconciled the ended worker, released
+  the Issue, analyzed it again, and reclaimed it. This confirms polling cannot
+  reconstruct an unobserved intermediate state and the documented recovery path
+  is necessary.
+- Later real claim waves were #196-#199, #200-#203, #204-#207, #208-#210, and
+  #211. The final manual hold was cleared only after all three dependencies were
+  closed.
+- The run ended with all 24 GitHub Issues and all 24 Kairota projections closed.
 
-- A hand-written validation script passed malformed triage arguments. This made
-  the evidence unreliable and showed that live checks need a repeatable harness.
-- A legacy native review poller made repository sync depend on an
-  integration surface that Kairota does not need for the current comment-based
-  review workflow.
-- Immediately created GitHub issues may not appear in a following repository
-  list response on the first sync attempt. Live validation must retry sync and
-  observation before treating a missing temporary issue as a product failure.
+Playwright observed the real service at 1440x900 and 390x844 during the run. The
+intermediate UI showed exactly 12 blocked, 4 ready, 4 in progress, and 4 closed;
+the final UI showed 24 closed. Project multi-select, manual synchronization,
+state filtering, Issue details, dependencies, add-project validation, and mobile
+layout matched API facts with no console errors or horizontal overflow.
 
-The native review poller has been removed. The GitHub adapter uses REST
-repository, issue, pull request, check, status, and issue-comment surfaces for
-the current milestone. The live validation path is:
+The live pass found and fixed three user-visible defects:
 
-```bash
-python .agents/checks/live_github_dogfood.py --repo <github-owner>/<github-repo>
-```
-
-The script creates 24 temporary issues, syncs until all are observed or the retry
-budget is exhausted, runs the complex scheduling scenario against an isolated
-database, and closes the temporary issues in cleanup.
-
-## 2026-07-08 UTC Repeated Live E2E
-
-Two live rounds were run with 24 temporary GitHub issues per round. Each round
-covered:
-
-- registration and repository sync into a fresh local database;
-- four initial parallel worker claims with `max_active_leases=4`;
-- a fifth claim rejected with `blocked_by_capacity`;
-- dependency blocking before upstream issue close;
-- GitHub issue close syncing work items to `done`;
-- replacement claims after lease release;
-- dependency unlock where C02 became ready only after A02 and B01 were closed;
-- blocked, backlog, human-decision, missing-metadata, conflict-key, and fallback
-  conflict-key cases;
-- workbench rendering checked through a browser.
-
-Round 1 passed scheduler validation and exposed UI/runtime issues:
-
-- the web app could not read the API across local dev origins because the API did
-  not emit CORS headers;
-- search-filtered UI counts were inconsistent across the header, side
-  navigation, board sections, and Decision Inbox;
-- dependency details showed raw work item IDs, which made dependency state hard
-  to verify from the UI.
-
-Fixes applied:
-
-- configurable local-origin CORS support in the API;
-- unified search filtering for header visible count, navigation counts, board
-  section counts, summary visible count, and Decision Inbox;
-- dependency details resolve known dependency IDs to work item title and status.
-
-Round 2 created a fresh 24-issue scenario and passed without new findings.
-Filtered UI observation showed 24 visible work items: 14 ready, 4 running, 3
-blocked, 0 waiting, 0 failed, and 3 done. The selected C02 item showed
-`ready_for_claim` and displayed A02 and B01 dependencies as `done`. Browser
-console checks showed no fetch or rendering errors.
-
-## 2026-07-09 External Repository Migration Findings
-
-A separate managed-project migration test against an active repository found
-adoption blockers that are now covered by product changes and tests:
-
-- Initial onboarding can use bounded `mode=issues` sync with issue filters, so
-  large repositories do not need full PR/check enrichment before scheduling.
-- Worker-run close with result `done` can complete non-PR work under the active
-  lease and fencing token.
-- CLI `work-items create --status` advertises only safe initial statuses.
-- The web workbench displays the actual API base, service health, opaque
-  database identity, and latest refresh state.
-- Ready-status work with unmet dependencies or active conflict locks appears
-  with blocker-specific actions instead of looking claimable.
-- `claim-next` blocked responses include prioritized aggregate blocker counts.
-- Triage updates are patch-like, so omitted scheduling facts are preserved.
-
-## Remaining Gaps
-
-Webhook delivery from GitHub can be unit-tested with signed payloads, but true
-public webhook delivery still requires an externally reachable endpoint. Treat
-that as an environment validation, not as a local unit test.
+- SQLite datetimes lost UTC information and appeared several hours stale in the
+  browser; JSON contracts now serialize UTC with `Z`.
+- Mobile details were rendered after the entire Issue list; they now open as an
+  immediately visible fixed drawer.
+- Project registration required a second manual synchronization; the UI now
+  synchronizes the new project immediately.

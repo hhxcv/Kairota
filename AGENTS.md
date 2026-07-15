@@ -27,19 +27,20 @@ or behavior. Mark unimplemented material as `planned`, `draft`, `intended`, or
 
 ## Product Boundary
 
-Kairota is a planned personal AI work control plane. It is intended to manage
-work items, scheduling facts, dependencies, leases, conflict locks, worker runs,
-review state, repository check summaries, cost events, and cross-project
-experience.
+Kairota is a local AI project scheduling service. Its current runtime manages
+registered GitHub projects, synced Issues, dependency analysis, five scheduling
+states, versioned claim/release commands, sync health, and a human progress UI.
+The managed project's single main AI owns workers and concurrency outside
+Kairota.
 
 Kairota is not a domain application, generic chat app, full document editor,
 hosted multi-tenant SaaS, secret manager, remote-control tool, or replacement
 for Git, CI, or source repositories.
 
-GitHub is the first planned repository adapter because it is the immediate
-migration source. Codex, CI systems, local repos, mail, calendar, and other
-tools are external integrations. Convert integration data into Kairota contracts
-before using it as scheduler truth.
+GitHub Issues are the current repository source. Issue open/closed state is
+fetched through REST; a dependency is satisfied only when its Issue is closed.
+PR, CI, review, worker, cost, and other project-management facts are not current
+scheduler inputs.
 
 ## Milestone Fit
 
@@ -60,7 +61,9 @@ before using it as scheduler truth.
 ## Architecture Principles
 
 - Local-first personal control plane by default.
-- Postgres-backed scheduler truth is expected for claim, lease, and lock safety.
+- Keep the current single-main-AI contract explicit; do not add worker leases,
+  heartbeats, attempts, capacity, or conflict locks without a new accepted need.
+- Use versioned atomic updates for the `ready` to `in_progress` claim boundary.
 - Keep adapters at the boundary; keep scheduler contracts owned by Kairota.
 - Keep code high-cohesion, low-coupling, reusable where reuse removes real duplication.
 - Make failure states, recovery paths, and audit events explicit.
@@ -89,8 +92,10 @@ placeholders in examples. Public PRs, issues, comments, and docs use UTC or
 date-only time when a timestamp is necessary.
 
 Common leaks include absolute paths, user or home names, local time-zone strings,
-local clock times, localhost or private endpoints, proxy values, config values,
-and copied terminal output that contains local-only environment details.
+local clock times, machine-specific private endpoints, proxy values, config
+values, and copied terminal output that contains local-only environment details.
+The documented product default `http://127.0.0.1:8010` is portable product
+configuration, not a private endpoint.
 
 ## Docs And Skills
 

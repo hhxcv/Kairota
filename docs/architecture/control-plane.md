@@ -1,69 +1,66 @@
 ---
 doc:
-  updated_at: 2026-07-08
+  updated_at: 2026-07-10
   category: architecture
-  status: mixed-current-planned
+  status: current
   audience: ai
   keywords: [control-plane, architecture, product-scope]
-  description: "Defines the planned Kairota control-plane architecture and boundaries."
+  description: "Defines Kairota's current local Issue scheduling boundary."
 ---
 
 # Control Plane Architecture
 
-Status: mixed current and planned. M1 runtime foundation, scheduler, claim and
-lease services, GitHub sync, repository registration, API/CLI boundaries, queue
-workbench UI, root managed-project skill, and worker run lifecycle commands are
-implemented. MCP, broad observability, and experience hub capabilities remain
-planned.
-
 ## Purpose
 
-Kairota is a personal AI work control plane. The first product slice replaces
-GitHub Project as the durable scheduler for autonomous development work. GitHub
-is the first adapter, not the core architecture boundary.
+Kairota provides mechanical project scheduling for one or more GitHub projects.
+It runs locally, synchronizes Issues, stores dependency analysis supplied by the
+managed project's main AI, computes readiness, and exposes progress to humans.
 
-Kairota runs as a local service. Other projects configure the Kairota service
-address, register their GitHub repository, and then let Kairota monitor issue
-state and identify ready work. The managed project's AI uses the installable
-skill in `skills/kairota-managed-project` to analyze issue dependencies and
-conflicts, submit triage facts, claim ready work, and report worker progress.
-Humans use the web UI to understand progress and blockers.
+## Ownership
 
-## Planned Layers
-
-| Layer | Owns |
+| Owner | Facts and actions |
 | --- | --- |
-| Control Kernel | Work items, dependencies, claims, leases, conflict locks, worker runs, events |
-| Integration Adapters | Repository providers, AI runtimes, CI, local repos, future external tools |
-| Interfaces | Web UI, CLI, REST API, installable skills, MCP server, webhook receiver |
-| Observability | Cost events, duration, retries, review cycle, worker utilization |
-| Experience Hub | Cross-project patterns, anti-patterns, postmortems, adoption records |
+| GitHub | Project identity, Issue number/title/URL, open or closed state |
+| Managed project's main AI | Issue interpretation, dependency graph, manual holds, worker cap, subagent lifecycle, validation, GitHub close |
+| Kairota | Registered projects, sync health, dependency edges, five scheduling states, atomic claim/release, UI read model |
+| Subagent | Assigned project work and reporting back to its main AI; never Kairota calls |
+| Human | Starts Kairota, registers projects, observes progress, resolves product decisions |
 
-## Architecture Decisions
+## Runtime Shape
 
-- Kairota-owned contracts are scheduler truth; external systems are caches or sources.
-- Postgres is the expected store for claim, lease, and lock safety.
-- Integration adapters convert external state into Kairota records.
-- Kairota is the mechanical scheduler; project-local AI owns semantic issue
-  analysis, dependency definition, and conflict-key selection.
-- Root `skills/` is the distribution surface for managed projects; matching
-  dogfood copies in `.agents/skills/` keep Kairota itself on the same workflow.
-- The first UI must show queue health before it adds general project-management features.
-- Cost and experience features should reuse the same event and work item model.
+```text
+GitHub REST Issues ----> sync reducer ----> managed_issues
+       ^                    |                    |
+       |                    +--> sync health    +--> five-state derivation
+Issue webhook                                   |
+       |                                        v
+       +---- exact REST refresh         REST API and human UI
+                                                ^
+                                                |
+                                    managed-project main AI
+```
 
-## Non-Goals
+- Polling is the convergence and repair path.
+- A signed Issue webhook never becomes scheduler truth directly; it triggers an
+  exact REST Issue refresh.
+- Synchronization for the same project is serialized inside the local service.
+- Failed or stale synchronization makes claims unavailable.
+- SQLite is internal to Kairota and upgraded automatically. Versioned atomic
+  updates protect the only contested boundary, `ready -> in_progress`.
 
-- Full document editor.
-- Generic chat product.
-- Hosted multi-tenant SaaS.
-- Source-code hosting.
-- CI execution.
-- Secret manager.
-- Remote-control automation without explicit adapters and audit.
+## Current Data
 
-## Open Decisions
+The active schema contains `projects`, `project_sync_states`, `managed_issues`,
+`issue_dependencies`, `command_requests`, `inbound_events`, and `audit_events`.
+The M1 prototype tables were intentionally destroyed; no migration or backup is
+part of this milestone.
 
-- Initial auth model beyond single-operator local mode.
-- Threshold for introducing Temporal or another durable workflow engine after M1.
-- Which GitHub-specific fields need long-term adapter-only retention after the
-  first adapter is implemented.
+## Product Boundary
+
+Kairota does not contain worker, execution, attempt, resume, requeue, heartbeat,
+lease, lock, PR, CI, or review scheduling models. These would duplicate the
+single main AI or add facts that do not decide Issue readiness.
+
+Future project-management information may be synchronized for display, but it
+must remain outside the readiness predicate unless a new accepted design proves
+otherwise.

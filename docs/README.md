@@ -1,31 +1,31 @@
 ---
 doc:
-  updated_at: 2026-07-08
+  updated_at: 2026-07-10
   category: index
   status: current
   audience: ai
   keywords: [docs-index, routing, owner-docs]
-  description: "Routes AI readers to Kairota owner docs without repeating facts."
+  description: "Routes AI readers to current Kairota owner docs."
 ---
 
 # Docs Index
 
-Open the smallest owner doc that matches the task. Do not use this index as a
-fact source.
+Open the smallest owner document that matches the task.
 
-| Task | Keywords | Open | Do not open by default |
-| --- | --- | --- | --- |
-| Understand product scope and system shape | architecture, control-plane, scope | `docs/architecture/control-plane.md` | Contract details |
-| Plan or implement M1 AI Dev Queue | m1, ai-dev-queue, scheduler, implementation-plan | `docs/architecture/m1-ai-dev-queue.md` | Cost or experience docs |
-| Manage another project with Kairota | managed-project, dogfood, skill, repository | `skills/kairota-managed-project/SKILL.md` | Cost or experience docs |
-| Design or review the first UI | ui, dashboard, workbench, design | `docs/design/product-ui.md` | Backend contracts |
-| Define or inspect work item facts | work-item, issue, task, status | `docs/contracts/work-items.md` | Scheduler internals |
-| Define or inspect scheduler behavior | scheduler, lease, claim, lock | `docs/contracts/scheduler.md` | UI design |
-| Define or inspect worker run facts | worker, agent, run, lifecycle | `docs/contracts/agent-runs.md` | Cost charts |
-| Define or inspect cost data | token, cost, duration, metrics | `docs/contracts/cost-events.md` | Work item details |
-| Define or inspect reusable experience facts | pattern, postmortem, adoption | `docs/contracts/experience-registry.md` | Scheduler details |
-| Design integration APIs | api, mcp, webhook, adapter | `docs/interfaces/control-api.md` | UI details |
-| Check privacy and public text rules | privacy, secrets, local-info | `docs/governance/privacy.md` | Product contracts |
-| Choose validation for current repo state | validation, checks, baseline | `docs/validation/baseline.md` | Product roadmap |
-| Validate managed-project dogfood scheduling | dogfood, live-github, managed-project | `docs/validation/managed-project-dogfood.md` | Cost or UI docs |
-| Verify M1 exit acceptance | m1, exit, acceptance, smoke | `docs/validation/m1-exit-checklist.md` | Product roadmap |
+| Task | Open |
+| --- | --- |
+| Understand product scope and system boundaries | `docs/architecture/control-plane.md` |
+| Implement or review the current milestone | `docs/architecture/m1-ai-dev-queue.md` |
+| Use Kairota from a managed project | `skills/kairota-managed-project/SKILL.md` |
+| Design or review the UI | `docs/design/product-ui.md` |
+| Inspect managed Issue facts and states | `docs/contracts/work-items.md` |
+| Inspect readiness and claim rules | `docs/contracts/scheduler.md` |
+| Implement or consume REST/webhooks | `docs/interfaces/control-api.md` |
+| Select validation and acceptance evidence | `docs/validation/baseline.md` |
+| Review complex scheduling dogfood | `docs/validation/managed-project-dogfood.md` |
+| Check privacy and public text rules | `docs/governance/privacy.md` |
+| Inspect planned cost facts | `docs/contracts/cost-events.md` |
+| Inspect planned experience records | `docs/contracts/experience-registry.md` |
+
+Cost, generic agent-run, and experience documents describe planned work only and
+must not be treated as current scheduler contracts.

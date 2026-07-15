@@ -15,3 +15,4 @@ coverage/
 *.pyc
 *.log
 *.tsbuildinfo
+test-output/

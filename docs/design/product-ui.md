@@ -1,50 +1,45 @@
 ---
 doc:
-  updated_at: 2026-07-08
+  updated_at: 2026-07-10
   category: design
-  status: mixed-current-planned
+  status: current
   audience: ai
-  keywords: [ui, dashboard, workbench, product-design]
-  description: "Defines Kairota UI surfaces and design priorities."
+  keywords: [ui, dashboard, issues, progress]
+  description: "Defines the current unified managed Issue dashboard."
 ---
 
 # Product UI
 
-Status: mixed current and planned. The M1 queue workbench with recovery signals
-is implemented. Cost, project management, and cross-project experience surfaces
-are planned.
+The first screen is a dense operational Issue dashboard, not a landing page.
+It renders only API data and must never substitute fixtures when the API is empty
+or unavailable.
 
-## Implemented First Screen
+## Required Regions
 
-The first UI is an operational queue surface, not a marketing landing page.
-It renders Kairota API read models. If API data is unavailable, it shows an
-explicit empty or unavailable state; it must not fall back to fake queue data in
-product runtime.
+- Header: Kairota identity, service health, refresh, and add-project command.
+- Project filter: searchable multi-select, all-projects mode, selected count,
+  clear action, and per-project sync health.
+- State summary: the five scheduling states as both scoped counts and filters.
+- Issue list: project, Issue, state, dependency progress or blocker, and last
+  synchronization time, with search and pagination.
+- Detail drawer: GitHub link, dependency list, hold/block reasons, current state,
+  and useful timing facts.
+- Explicit loading, empty, disconnected, sync-error, and mutation-error states.
 
-Primary regions:
+## Interaction Rules
 
-- Ready work.
-- Running workers.
-- Blocked work.
-- Waiting repository checks or review.
-- Human or delegated AI decision inbox.
-- Recovery signals.
-- Recent events and failures.
-- Selected work item detail with scheduling facts, worker-run state, and
-  repository gate summary when present.
+- Counts use the selected-project and search scope, not fixture totals.
+- Project and state selections are represented in API query parameters.
+- Clicking a row preserves the list context and opens a side drawer.
+- Add-project and manual-sync commands use unique idempotency keys and refresh
+  project and Issue reads after success.
+- The UI is human observation and project setup; dependency analysis and claims
+  remain main-AI API actions.
 
-## Design Principles
+## Visual Rules
 
-- Prefer dense, calm, operational UI over decorative presentation.
-- Show state transitions, blockers, and next action directly.
-- Make stale state and missing scheduling facts visible.
-- Keep cost and duration signals near the work they explain.
-- Use project style consistently once visual tokens exist.
-
-## Future Surfaces
-
-- Cost trends and waste analysis.
-- Project timeline and retrospective view.
-- Agent utilization and quality view.
-- Cross-project experience registry.
-- Command center for common actions.
+Use a quiet work-tool palette with semantic state colors, compact typography,
+stable table geometry, Lucide icons, and at most 8px radius. Avoid hero content,
+decorative gradients, nested cards, fake charts, or explanatory marketing copy.
+Desktop and mobile layouts must preserve labels, controls, and state without
+overlap or horizontal loss of primary Issue identity.

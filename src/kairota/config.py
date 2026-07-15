@@ -53,6 +53,8 @@ class Settings(BaseSettings):
     github_token: str | None = Field(default=None, repr=False)
     github_api_url: str = "https://api.github.com"
     github_webhook_secret: str | None = Field(default=None, repr=False)
+    sync_interval_seconds: int = Field(default=60, ge=5)
+    sync_stale_after_seconds: int = Field(default=300, ge=30)
     cors_allow_origins: tuple[str, ...] = Field(
         default_factory=default_cors_allow_origins
     )

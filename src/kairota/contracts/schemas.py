@@ -1,30 +1,14 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 from kairota.contracts.enums import (
-    AutonomyMode,
-    CheckConclusion,
-    CheckStatus,
-    EventStatus,
-    LeaseStatus,
-    LockHolderSource,
-    OutboxStatus,
-    PullRequestState,
-    RepositoryIssueState,
-    RepositoryProvider,
-    RepositorySyncMode,
-    ReviewGateState,
-    RiskLevel,
-    SchedulerDecisionCode,
-    WorkerRole,
-    WorkerRunResult,
-    WorkerRunStatus,
-    WorkItemStatus,
-    WorkType,
+    IssueSourceState,
+    SchedulingState,
+    SyncHealth,
 )
 
 JsonObject = dict[str, Any]
@@ -33,204 +17,104 @@ JsonObject = dict[str, Any]
 class ContractModel(BaseModel):
     model_config = ConfigDict(from_attributes=True, use_enum_values=True)
 
-
-class WorkItemCreate(ContractModel):
-    title: str = Field(min_length=1, max_length=240)
-    repository_id: str | None = None
-    status: WorkItemStatus = WorkItemStatus.NEEDS_TRIAGE
-    priority: int = Field(default=100, ge=0)
-    risk: RiskLevel = RiskLevel.MEDIUM
-    work_type: WorkType = WorkType.IMPLEMENTATION
-    autonomy_mode: AutonomyMode = AutonomyMode.AI_ASSISTED
-    acceptance: str | None = None
-    validation: str | None = None
-    expected_touch: str | None = None
-    source_url: str | None = None
-    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
-    dependency_ids: tuple[str, ...] = Field(default_factory=tuple)
+    @field_serializer("*", when_used="json", check_fields=False)
+    def serialize_utc_datetimes(self, value: Any) -> Any:
+        if not isinstance(value, datetime):
+            return value
+        aware = value if value.tzinfo is not None else value.replace(tzinfo=UTC)
+        return aware.astimezone(UTC).isoformat().replace("+00:00", "Z")
 
 
-class WorkItemRead(WorkItemCreate):
+class ProjectCreate(ContractModel):
+    remote: str = Field(min_length=1, max_length=500)
+
+
+class ProjectUpdate(ContractModel):
+    enabled: bool
+
+
+class ProjectSyncStateRead(ContractModel):
+    health: SyncHealth
+    last_attempt_at: datetime | None = None
+    last_success_at: datetime | None = None
+    last_error: str | None = None
+
+
+class ProjectRead(ContractModel):
     id: str
+    provider_repo_id: str
+    name: str
+    enabled: bool
+    sync: ProjectSyncStateRead
     created_at: datetime | None = None
     updated_at: datetime | None = None
 
 
-class QueueSummaryRead(ContractModel):
-    total: int
-    by_status: dict[str, int] = Field(default_factory=dict)
-    active_leases: int
-    active_locks: int
-
-
-class QueueWorkbenchRunRead(ContractModel):
-    id: str
-    lease_id: str | None = None
-    role: WorkerRole
-    status: WorkerRunStatus
-    result: WorkerRunResult | None = None
-    heartbeat_at: datetime | None = None
-    closed_at: datetime | None = None
-
-
-class QueueWorkbenchRowRead(ContractModel):
-    id: str
-    repository_id: str | None = None
+class DependencyRead(ContractModel):
+    issue_id: str
+    number: int
     title: str
-    section: str
-    status: WorkItemStatus
-    priority: int
-    risk: RiskLevel
-    work_type: WorkType
-    autonomy_mode: AutonomyMode
-    expected_touch: str | None = None
-    acceptance: str | None = None
-    validation: str | None = None
-    source_url: str | None = None
-    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
-    dependency_ids: tuple[str, ...] = Field(default_factory=tuple)
-    reason_code: str
-    next_action: str
-    worker_run: QueueWorkbenchRunRead | None = None
-    repository: JsonObject = Field(default_factory=dict)
+    source_state: IssueSourceState
+    url: str
 
 
-class QueueWorkbenchSectionRead(ContractModel):
+class ManagedIssueRead(ContractModel):
     id: str
+    project_id: str
+    number: int
     title: str
-    count: int
-    rows: tuple[QueueWorkbenchRowRead, ...] = Field(default_factory=tuple)
-
-
-class QueueWorkbenchEventRead(ContractModel):
-    id: str
-    kind: str
-    summary: str
-    subject_type: str | None = None
-    subject_id: str | None = None
-    status: str | None = None
+    url: str
+    source_state: IssueSourceState
+    scheduling_state: SchedulingState
+    scheduling_version: int
+    analysis_version: int
+    analysis_completed: bool
+    manual_hold_reason: str | None = None
+    in_progress_since: datetime | None = None
+    source_updated_at: str | None = None
+    last_synced_at: datetime | None = None
+    dependencies: tuple[DependencyRead, ...] = Field(default_factory=tuple)
+    dependency_closed_count: int = 0
+    blocking_reasons: tuple[str, ...] = Field(default_factory=tuple)
+    claimable_now: bool = False
+    claim_block_reason: str | None = None
     created_at: datetime | None = None
-    details: JsonObject = Field(default_factory=dict)
+    updated_at: datetime | None = None
 
 
-class QueueWorkbenchRecoverySignalRead(ContractModel):
-    id: str
-    title: str
-    severity: str
-    count: int
-    action: str
-    details: JsonObject = Field(default_factory=dict)
+class IssuePageRead(ContractModel):
+    items: tuple[ManagedIssueRead, ...]
+    total: int
+    page: int
+    page_size: int
+    by_state: dict[str, int] = Field(default_factory=dict)
 
 
-class QueueWorkbenchRead(ContractModel):
-    summary: QueueSummaryRead
-    sections: tuple[QueueWorkbenchSectionRead, ...]
-    decision_inbox: tuple[QueueWorkbenchRowRead, ...] = Field(default_factory=tuple)
-    recent_events: tuple[QueueWorkbenchEventRead, ...] = Field(default_factory=tuple)
-    failures: tuple[QueueWorkbenchEventRead, ...] = Field(default_factory=tuple)
-    recovery_signals: tuple[QueueWorkbenchRecoverySignalRead, ...] = Field(
-        default_factory=tuple
-    )
+class IssueAnalysisCommand(ContractModel):
+    expected_analysis_version: int = Field(ge=0)
+    dependency_issue_numbers: tuple[int, ...] = Field(default_factory=tuple)
+    manual_hold_reason: str | None = Field(default=None, max_length=500)
 
 
-class DemoSeedRead(ContractModel):
-    status: str
-    work_item_ids: tuple[str, ...] = Field(default_factory=tuple)
-    repository_ids: tuple[str, ...] = Field(default_factory=tuple)
-    seeded_records: int
+class IssueClaimCommand(ContractModel):
+    expected_scheduling_version: int = Field(ge=0)
 
 
-class SmokeCheckRead(ContractModel):
-    name: str
-    status: str
-    details: JsonObject = Field(default_factory=dict)
+class IssueReleaseCommand(ContractModel):
+    expected_scheduling_version: int = Field(ge=0)
+    reason: str = Field(min_length=1, max_length=500)
 
 
-class M1ExitSmokeRead(ContractModel):
-    status: str
-    checks: tuple[SmokeCheckRead, ...]
-
-
-class SchedulerDecisionRead(ContractModel):
-    id: str
-    cycle_id: str
-    work_item_id: str
-    code: SchedulerDecisionCode
-    explanation: str | None = None
-    blocking_facts: JsonObject = Field(default_factory=dict)
-
-
-class SchedulerCycleCreate(ContractModel):
-    queue_key: str = Field(default="default", min_length=1, max_length=160)
-    repository_id: str | None = None
-    capacity: int = Field(default=1, ge=0, le=100)
-
-
-class SchedulerCycleRead(ContractModel):
-    id: str
-    queue_key: str
-    repository_id: str | None = None
-    result: str
-    assigned_count: int
-    rejected_count: int
-    decisions: tuple[SchedulerDecisionRead, ...] = Field(default_factory=tuple)
-
-
-class LeaseRead(ContractModel):
-    id: str
-    work_item_id: str
-    owner: str
-    status: LeaseStatus
-    fencing_token: str
-    expires_at: datetime
-
-
-class ClaimWorkItemCommand(ContractModel):
-    owner: str = Field(min_length=1, max_length=160)
-    lease_ttl_seconds: int = Field(default=1800, gt=0, le=86_400)
-
-
-class ClaimWorkItemRead(ContractModel):
-    claimed: bool
-    work_item_id: str
-    lease_id: str | None = None
-    fencing_token: str | None = None
-    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
-    reason: SchedulerDecisionCode | None = None
-    explanation: str | None = None
-
-
-class ClaimNextWorkItemCommand(ClaimWorkItemCommand):
-    repository_id: str | None = None
-    queue_key: str = Field(default="default", min_length=1, max_length=160)
-    max_active_leases: int | None = Field(default=None, ge=1, le=100)
-
-
-class ClaimNextWorkItemRead(ContractModel):
-    claimed: bool
-    work_item_id: str | None = None
-    lease_id: str | None = None
-    fencing_token: str | None = None
-    conflict_keys: tuple[str, ...] = Field(default_factory=tuple)
-    reason: SchedulerDecisionCode | None = None
-    explanation: str | None = None
-    blocked_counts: dict[str, int] = Field(default_factory=dict)
-
-
-class LeaseHeartbeatCommand(ContractModel):
-    fencing_token: str = Field(min_length=1, max_length=120)
-    lease_ttl_seconds: int = Field(default=1800, gt=0, le=86_400)
-
-
-class LeaseHeartbeatRead(ContractModel):
-    refreshed: bool
-    lease_id: str
-    explanation: str | None = None
-
-
-class LeaseExpiryRead(ContractModel):
-    expired_lease_ids: tuple[str, ...] = Field(default_factory=tuple)
-    released_lock_ids: tuple[str, ...] = Field(default_factory=tuple)
+class ProjectSyncRead(ContractModel):
+    project_id: str
+    status: SyncHealth
+    issues_seen: int = 0
+    issues_created: int = 0
+    issues_updated: int = 0
+    transitions_applied: int = 0
+    replayed: bool = False
+    inbound_event_id: str | None = None
+    error: str | None = None
 
 
 class BlockedCommandResponse(ContractModel):
@@ -238,153 +122,3 @@ class BlockedCommandResponse(ContractModel):
     reason_code: str
     explanation: str
     details: JsonObject = Field(default_factory=dict)
-
-
-class LockHolderRead(ContractModel):
-    id: str
-    conflict_key: str
-    source: LockHolderSource
-    lease_id: str | None = None
-    pull_request_id: str | None = None
-    released_at: datetime | None = None
-
-
-class WorkerRunRead(ContractModel):
-    id: str
-    work_item_id: str
-    lease_id: str | None = None
-    role: WorkerRole
-    status: WorkerRunStatus
-    result: WorkerRunResult | None = None
-    validation: JsonObject = Field(default_factory=dict)
-    public_mutations: JsonObject = Field(default_factory=dict)
-    cost_summary: JsonObject = Field(default_factory=dict)
-    started_at: datetime | None = None
-    heartbeat_at: datetime | None = None
-    closed_at: datetime | None = None
-
-
-class WorkerRunCreateCommand(ContractModel):
-    work_item_id: str
-    lease_id: str
-    fencing_token: str = Field(min_length=1, max_length=120)
-    role: WorkerRole = WorkerRole.WORKER
-
-
-class WorkerRunHeartbeatCommand(ContractModel):
-    fencing_token: str = Field(min_length=1, max_length=120)
-
-
-class WorkerRunReportCommand(ContractModel):
-    fencing_token: str = Field(min_length=1, max_length=120)
-    validation: JsonObject = Field(default_factory=dict)
-    public_mutations: JsonObject = Field(default_factory=dict)
-    cost_summary: JsonObject = Field(default_factory=dict)
-
-
-class WorkerRunCloseCommand(WorkerRunReportCommand):
-    result: WorkerRunResult
-
-
-class WorkItemTriageCommand(ContractModel):
-    status: WorkItemStatus | None = None
-    priority: int | None = Field(default=None, ge=0)
-    risk: RiskLevel | None = None
-    work_type: WorkType | None = None
-    autonomy_mode: AutonomyMode | None = None
-    expected_touch: str | None = None
-    acceptance: str | None = None
-    validation: str | None = None
-    conflict_keys: tuple[str, ...] | None = None
-    dependency_ids: tuple[str, ...] | None = None
-
-
-class RepositoryCreate(ContractModel):
-    provider: RepositoryProvider = RepositoryProvider.GITHUB
-    remote: str | None = None
-    name: str | None = None
-    provider_repo_id: str | None = None
-    default_branch: str = "main"
-
-
-class RepositoryRead(ContractModel):
-    id: str
-    provider: RepositoryProvider
-    provider_repo_id: str
-    name: str
-    default_branch: str
-    sync_status: str
-
-
-class RepositorySyncRead(ContractModel):
-    repository_id: str
-    provider: RepositoryProvider
-    status: str
-    replayed: bool = False
-    issues_seen: int = 0
-    pull_requests_seen: int = 0
-    checks_seen: int = 0
-    reviews_seen: int = 0
-    work_items_created: int = 0
-    transitions_applied: int = 0
-    stale_summaries_marked: int = 0
-    inbound_event_id: str | None = None
-
-
-class RepositorySyncCommand(ContractModel):
-    mode: RepositorySyncMode = RepositorySyncMode.FULL
-    issue_state: RepositoryIssueState = RepositoryIssueState.ALL
-    labels: tuple[str, ...] = Field(default_factory=tuple)
-    issue_numbers: tuple[int, ...] = Field(default_factory=tuple)
-    since: str | None = None
-    max_pages: int | None = Field(default=None, ge=1, le=100)
-
-
-class PullRequestSummaryRead(ContractModel):
-    id: str
-    repository_id: str
-    provider_pr_id: str
-    number: int
-    state: PullRequestState
-    draft: bool
-    head_sha: str | None = None
-    merged: bool
-
-
-class CheckSummaryRead(ContractModel):
-    id: str
-    pull_request_id: str
-    name: str
-    status: CheckStatus
-    conclusion: CheckConclusion
-    head_sha: str | None = None
-    required: bool
-    stale: bool
-
-
-class ReviewSummaryRead(ContractModel):
-    id: str
-    pull_request_id: str
-    state: ReviewGateState
-    unresolved_count: int
-    stale: bool
-
-
-class InboundEventRead(ContractModel):
-    id: str
-    provider: RepositoryProvider
-    idempotency_key: str
-    event_type: str
-    action: str | None = None
-    payload_hash: str
-    status: EventStatus
-
-
-class OutboxEventRead(ContractModel):
-    id: str
-    idempotency_key: str
-    target: str
-    action: str
-    payload: JsonObject = Field(default_factory=dict)
-    status: OutboxStatus
-    retry_count: int

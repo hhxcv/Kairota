@@ -1,902 +1,936 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  Activity,
-  AlertTriangle,
-  CheckCircle2,
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  AlertCircle,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  ChevronsUpDown,
   CircleDot,
-  Clock3,
-  GitPullRequest,
+  ExternalLink,
+  FolderGit2,
+  LoaderCircle,
+  Plus,
   RefreshCw,
   Search,
-  ShieldAlert,
+  X,
 } from "lucide-react";
 
 import {
-  fetchQueueWorkbench,
-  fetchRepositories,
-  fetchRuntimeHealth,
-  getApiBaseUrl,
+  API_BASE_URL,
+  createProject,
+  fetchHealth,
+  fetchIssue,
+  fetchIssues,
+  fetchProjects,
+  syncProject,
 } from "./api";
-import "./styles.css";
 import {
-  allRows,
-  emptyWorkbench,
-  sectionTones,
-  type Repository,
-  type QueueWorkbench,
-  type QueueWorkbenchEvent,
-  type QueueWorkbenchRecoverySignal,
-  type QueueWorkbenchRow,
-  type QueueWorkbenchSection,
+  schedulingStates,
+  stateLabels,
+  type IssuePage,
+  type ManagedIssue,
+  type Project,
   type RuntimeHealth,
-  type SectionId,
-} from "./workbench";
+  type SchedulingState,
+} from "./domain";
+import "./styles.css";
 
-type DataSource = "api" | "empty";
-type LoadState = "idle" | "loading" | "ready";
-
-const sectionIcons: Record<SectionId, typeof CircleDot> = {
-  ready: CircleDot,
-  running: Activity,
-  blocked: ShieldAlert,
-  waiting: Clock3,
-  failed: AlertTriangle,
-  done: CheckCircle2,
+const PAGE_SIZE = 25;
+const emptyIssuePage: IssuePage = {
+  items: [],
+  total: 0,
+  page: 1,
+  page_size: PAGE_SIZE,
+  by_state: {},
 };
 
-const allSections = "all";
-const unscopedProjectId = "__unscoped__";
-
-type ProjectFilterOption = {
-  id: string;
-  label: string;
-  count: number;
-  syncStatus: string | null;
-};
+type RequestState = "idle" | "loading" | "ready";
 
 export function App() {
-  const [workbench, setWorkbench] = useState<QueueWorkbench>(emptyWorkbench);
-  const [repositories, setRepositories] = useState<Repository[]>([]);
-  const [repositoriesError, setRepositoriesError] = useState<string | null>(null);
-  const [source, setSource] = useState<DataSource>("empty");
-  const [loadState, setLoadState] = useState<LoadState>("idle");
-  const [loadError, setLoadError] = useState<string | null>(null);
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [healthError, setHealthError] = useState<string | null>(null);
-  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
-  const [activeSection, setActiveSection] = useState<SectionId | typeof allSections>(
-    allSections,
-  );
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [projectsError, setProjectsError] = useState<string | null>(null);
+  const [issues, setIssues] = useState<IssuePage>(emptyIssuePage);
+  const [issuesError, setIssuesError] = useState<string | null>(null);
+  const [issuesState, setIssuesState] = useState<RequestState>("idle");
+  const [selectedProjectIds, setSelectedProjectIds] = useState<string[]>([]);
+  const [activeState, setActiveState] = useState<SchedulingState | null>(null);
   const [query, setQuery] = useState("");
-  const [selectedRepositoryIds, setSelectedRepositoryIds] = useState<string[]>([]);
-  const [selectedRowId, setSelectedRowId] = useState<string>("");
-  const apiBaseUrl = useMemo(() => getApiBaseUrl(), []);
+  const deferredQuery = useDeferredValue(query);
+  const [page, setPage] = useState(1);
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const [lastRefreshAt, setLastRefreshAt] = useState<string | null>(null);
+  const [selectedIssue, setSelectedIssue] = useState<ManagedIssue | null>(null);
+  const [detailState, setDetailState] = useState<RequestState>("idle");
+  const [detailError, setDetailError] = useState<string | null>(null);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
+  const [syncingProjectIds, setSyncingProjectIds] = useState<string[]>([]);
+  const [notice, setNotice] = useState<string | null>(null);
 
-  const loadWorkbench = useCallback(async (signal?: AbortSignal) => {
-    setLoadState("loading");
-    try {
-      const [data, runtime, repositoryResult] = await Promise.all([
-        fetchQueueWorkbench(signal),
-        fetchRuntimeHealth(signal)
-          .then((value) => ({ value, error: null }))
-          .catch((error) => ({
-            value: null,
-            error: error instanceof Error ? error.message : "Health request failed",
-          })),
-        fetchRepositories(signal)
-          .then((value) => ({ value, error: null }))
-          .catch((error) => ({
-            value: [] as Repository[],
-            error:
-              error instanceof Error ? error.message : "Repositories request failed",
-          })),
-      ]);
-      setWorkbench(data);
-      setRepositories(repositoryResult.value);
-      setRepositoriesError(repositoryResult.error);
-      setSource("api");
-      setLoadError(null);
-      setHealth(runtime.value);
-      setHealthError(runtime.error);
-      setLastRefreshAt(new Date().toISOString());
-      setSelectedRowId((current) => current || allRows(data)[0]?.id || "");
-    } catch (error) {
-      if (signal?.aborted) {
-        return;
-      }
-      setWorkbench(emptyWorkbench);
-      setRepositories([]);
-      setRepositoriesError(null);
-      setSource("empty");
-      setLoadError(error instanceof Error ? error.message : "Request failed");
-      setHealth(null);
-      setHealthError(null);
-      setLastRefreshAt(new Date().toISOString());
-      setSelectedRowId("");
-    } finally {
-      if (!signal?.aborted) {
-        setLoadState("ready");
-      }
-    }
-  }, []);
+  const selectedProjectKey = selectedProjectIds.join("\u0000");
 
   useEffect(() => {
     const controller = new AbortController();
-    void loadWorkbench(controller.signal);
+    void Promise.allSettled([
+      fetchHealth(controller.signal).then((value) => {
+        setHealth(value);
+        setHealthError(null);
+      }),
+      fetchProjects(controller.signal).then((value) => {
+        setProjects(value);
+        setProjectsError(null);
+      }),
+    ]).then((results) => {
+      if (controller.signal.aborted) {
+        return;
+      }
+      const [healthResult, projectsResult] = results;
+      if (healthResult.status === "rejected") {
+        setHealth(null);
+        setHealthError(errorMessage(healthResult.reason));
+      }
+      if (projectsResult.status === "rejected") {
+        setProjects([]);
+        setProjectsError(errorMessage(projectsResult.reason));
+      }
+    });
     return () => controller.abort();
-  }, [loadWorkbench]);
+  }, [refreshVersion]);
 
-  const rows = useMemo(() => allRows(workbench), [workbench]);
-  const rowsById = useMemo(
-    () => new Map(rows.map((row) => [row.id, row])),
-    [rows],
+  useEffect(() => {
+    const controller = new AbortController();
+    setIssuesState("loading");
+    void fetchIssues(
+      {
+        projectIds: selectedProjectIds,
+        states: activeState ? [activeState] : [],
+        query: deferredQuery,
+        page,
+        pageSize: PAGE_SIZE,
+      },
+      controller.signal,
+    )
+      .then((value) => {
+        setIssues(value);
+        setIssuesError(null);
+        setLastRefreshAt(new Date().toISOString());
+      })
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setIssues(emptyIssuePage);
+          setIssuesError(errorMessage(error));
+          setLastRefreshAt(new Date().toISOString());
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setIssuesState("ready");
+        }
+      });
+    return () => controller.abort();
+  }, [activeState, deferredQuery, page, refreshVersion, selectedProjectKey]);
+
+  useEffect(() => {
+    if (!selectedIssue) {
+      setDetailState("idle");
+      setDetailError(null);
+      return;
+    }
+    const controller = new AbortController();
+    setDetailState("loading");
+    setDetailError(null);
+    void fetchIssue(selectedIssue.id, controller.signal)
+      .then(setSelectedIssue)
+      .catch((error) => {
+        if (!controller.signal.aborted) {
+          setDetailError(errorMessage(error));
+        }
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) {
+          setDetailState("ready");
+        }
+      });
+    return () => controller.abort();
+  }, [selectedIssue?.id]);
+
+  const projectById = useMemo(
+    () => new Map(projects.map((project) => [project.id, project])),
+    [projects],
   );
-  const repositoryById = useMemo(
-    () => new Map(repositories.map((repository) => [repository.id, repository])),
-    [repositories],
-  );
-  const searchMatchedRows = useMemo(() => filterRows(rows, query, []), [query, rows]);
-  const projectOptions = useMemo(
-    () => buildProjectOptions(searchMatchedRows, repositories),
-    [repositories, searchMatchedRows],
-  );
-  const navSections = useMemo(
-    () =>
-      filterSections(workbench.sections, allSections, query, selectedRepositoryIds),
-    [query, selectedRepositoryIds, workbench.sections],
-  );
-  const filteredSections = useMemo(
-    () =>
-      filterSections(workbench.sections, activeSection, query, selectedRepositoryIds),
-    [activeSection, query, selectedRepositoryIds, workbench.sections],
-  );
-  const navRows = useMemo(() => rowsFromSections(navSections), [navSections]);
-  const visibleRows = useMemo(
-    () => rowsFromSections(filteredSections),
-    [filteredSections],
-  );
-  const decisionRows = useMemo(
-    () => filterRows(workbench.decision_inbox, query, selectedRepositoryIds),
-    [query, selectedRepositoryIds, workbench.decision_inbox],
-  );
-  const selectedRow =
-    visibleRows.find((row) => row.id === selectedRowId) ?? visibleRows[0] ?? null;
-  const totalSuffix =
-    visibleRows.length === rows.length ? "" : ` (${rows.length} total)`;
-  const toggleRepository = useCallback((repositoryId: string) => {
-    setSelectedRepositoryIds((current) =>
-      current.includes(repositoryId)
-        ? current.filter((id) => id !== repositoryId)
-        : [...current, repositoryId],
-    );
+  const totalPages = Math.max(1, Math.ceil(issues.total / issues.page_size));
+  const allStateCount = sumStateCounts(issues) || issues.total;
+
+  const selectState = useCallback((state: SchedulingState | null) => {
+    setActiveState(state);
+    setPage(1);
   }, []);
+
+  const toggleProject = useCallback((projectId: string) => {
+    setSelectedProjectIds((current) =>
+      current.includes(projectId)
+        ? current.filter((id) => id !== projectId)
+        : [...current, projectId],
+    );
+    setPage(1);
+  }, []);
+
+  const refresh = useCallback(() => {
+    setNotice(null);
+    setRefreshVersion((value) => value + 1);
+  }, []);
+
+  const handleSync = useCallback(async (project: Project) => {
+    setSyncingProjectIds((current) => [...current, project.id]);
+    setNotice(null);
+    try {
+      await syncProject(project.id);
+      setNotice(`${project.name} synchronized.`);
+      setRefreshVersion((value) => value + 1);
+    } catch (error) {
+      setNotice(`Sync failed: ${errorMessage(error)}`);
+    } finally {
+      setSyncingProjectIds((current) => current.filter((id) => id !== project.id));
+    }
+  }, []);
+
+  const handleProjectCreated = useCallback((project: Project) => {
+    setAddProjectOpen(false);
+    setSelectedProjectIds([project.id]);
+    setPage(1);
+    setRefreshVersion((value) => value + 1);
+    void handleSync(project);
+  }, [handleSync]);
 
   return (
     <main className="app-shell">
-      <aside className="side-rail" aria-label="Queue navigation">
-        <div className="brand-lockup">
-          <span className="brand-mark">K</span>
+      <header className="topbar">
+        <div className="brand">
+          <span className="brand-mark" aria-hidden="true">K</span>
           <div>
             <strong>Kairota</strong>
-            <span>AI Dev Queue</span>
+            <span>Issue scheduling</span>
           </div>
         </div>
-        <nav className="section-nav" aria-label="Queue sections">
-          <NavButton
-            active={activeSection === allSections}
-            count={navRows.length}
-            label="All"
-            onClick={() => setActiveSection(allSections)}
-          />
-          {navSections.map((section) => (
-            <NavButton
-              active={activeSection === section.id}
-              count={section.count}
-              key={section.id}
-              label={section.title}
-              onClick={() => setActiveSection(section.id)}
-              sectionId={section.id}
+        <div className="topbar-actions">
+          <ConnectionStatus error={healthError} health={health} />
+          <button
+            aria-label="Refresh data"
+            className="icon-button icon-button--quiet"
+            disabled={issuesState === "loading"}
+            onClick={refresh}
+            title="Refresh data"
+            type="button"
+          >
+            <RefreshCw
+              aria-hidden="true"
+              className={issuesState === "loading" ? "spin" : undefined}
+              size={17}
             />
-          ))}
-        </nav>
-      </aside>
+          </button>
+          <button
+            className="command-button"
+            onClick={() => setAddProjectOpen(true)}
+            type="button"
+          >
+            <Plus aria-hidden="true" size={17} />
+            Add project
+          </button>
+        </div>
+      </header>
 
-      <section className="workspace" aria-label="Queue workbench">
-        <header className="command-bar">
+      <section className="workspace" aria-label="GitHub Issue scheduling board">
+        <div className="workspace-heading">
           <div>
-            <h1>AI Dev Queue</h1>
-            <p className="bar-copy">
-              {source === "api" ? "Local API" : "No API data"} -{" "}
-              {visibleRows.length} visible work items{totalSuffix}
+            <h1>Issues</h1>
+            <p>
+              {issues.total} matching {issues.total === 1 ? "issue" : "issues"}
+              {lastRefreshAt ? ` | Updated ${formatRelative(lastRefreshAt)}` : ""}
             </p>
           </div>
-          <div className="command-actions">
-            <label className="search-box">
+          <div className="filters">
+            <ProjectPicker
+              error={projectsError}
+              onClear={() => {
+                setSelectedProjectIds([]);
+                setPage(1);
+              }}
+              onOpenChange={setProjectPickerOpen}
+              onSync={handleSync}
+              onToggle={toggleProject}
+              open={projectPickerOpen}
+              projects={projects}
+              selectedIds={selectedProjectIds}
+              syncingIds={syncingProjectIds}
+            />
+            <label className="search-field">
               <Search aria-hidden="true" size={16} />
               <input
-                aria-label="Search work items"
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search title, status, reason"
+                aria-label="Search issues"
+                onChange={(event) => {
+                  setQuery(event.target.value);
+                  setPage(1);
+                }}
+                placeholder="Search issues"
                 value={query}
               />
+              {query ? (
+                <button
+                  aria-label="Clear search"
+                  onClick={() => {
+                    setQuery("");
+                    setPage(1);
+                  }}
+                  title="Clear search"
+                  type="button"
+                >
+                  <X aria-hidden="true" size={15} />
+                </button>
+              ) : null}
             </label>
+          </div>
+        </div>
+
+        <StatusFilter
+          activeState={activeState}
+          allCount={allStateCount}
+          byState={issues.by_state}
+          onSelect={selectState}
+        />
+
+        {notice ? (
+          <div className="notice" role="status">
+            {notice}
             <button
-              className="icon-button"
-              disabled={loadState === "loading"}
-              onClick={() => void loadWorkbench()}
+              aria-label="Dismiss notification"
+              onClick={() => setNotice(null)}
+              title="Dismiss"
               type="button"
             >
-              <RefreshCw aria-hidden="true" size={16} />
-              Refresh
+              <X aria-hidden="true" size={15} />
             </button>
-          </div>
-        </header>
-
-        <ProjectFilter
-          allCount={searchMatchedRows.length}
-          error={repositoriesError}
-          onClear={() => setSelectedRepositoryIds([])}
-          onToggle={toggleRepository}
-          options={projectOptions}
-          selectedRepositoryIds={selectedRepositoryIds}
-        />
-
-        <SummaryStrip
-          decisionCount={decisionRows.length}
-          failureCount={workbench.failures.length}
-          summary={workbench.summary}
-          visibleCount={visibleRows.length}
-        />
-
-        <RuntimeStatus
-          apiBaseUrl={apiBaseUrl}
-          health={health}
-          healthError={healthError}
-          lastRefreshAt={lastRefreshAt}
-          loadState={loadState}
-        />
-
-        {loadError ? (
-          <div className="runtime-note" role="status">
-            API unavailable - {loadError}
           </div>
         ) : null}
 
-        <div className="workbench-layout">
-          <section className="queue-board" aria-label="Queue status sections">
-            {filteredSections.map((section) => (
-              <QueueSection
-                key={section.id}
-                onSelect={setSelectedRowId}
-                repositoryById={repositoryById}
-                section={section}
-                selectedRowId={selectedRow?.id ?? ""}
+        <div className={`content-layout${selectedIssue ? " content-layout--detail" : ""}`}>
+          <section className="issue-surface" aria-label="Issues">
+            {issuesError ? (
+              <ErrorState message={issuesError} onRetry={refresh} />
+            ) : issuesState === "loading" && issues.items.length === 0 ? (
+              <LoadingState />
+            ) : issues.items.length === 0 ? (
+              <EmptyState hasFilters={Boolean(activeState || query || selectedProjectIds.length)} />
+            ) : (
+              <IssueTable
+                issues={issues.items}
+                onSelect={setSelectedIssue}
+                projectById={projectById}
+                selectedIssueId={selectedIssue?.id ?? null}
               />
-            ))}
+            )}
+            {!issuesError && issues.total > 0 ? (
+              <Pagination
+                currentPage={issues.page}
+                onPageChange={setPage}
+                pageSize={issues.page_size}
+                total={issues.total}
+                totalPages={totalPages}
+              />
+            ) : null}
           </section>
 
-          <aside className="detail-rail" aria-label="Work item details">
-            {selectedRow ? (
-              <DetailPanel
-                repositoryById={repositoryById}
-                row={selectedRow}
-                rowsById={rowsById}
-              />
-            ) : (
-              <EmptyDetail />
-            )}
-            <DecisionInbox
-              onSelect={setSelectedRowId}
-              repositoryById={repositoryById}
-              rows={decisionRows}
-              selectedRowId={selectedRow?.id ?? ""}
+          {selectedIssue ? (
+            <IssueDetail
+              error={detailError}
+              issue={selectedIssue}
+              loading={detailState === "loading"}
+              onClose={() => setSelectedIssue(null)}
+              project={projectById.get(selectedIssue.project_id)}
             />
-            <RecoverySignals signals={workbench.recovery_signals} />
-            <EventFeed events={workbench.failures} title="Failures" />
-            <EventFeed events={workbench.recent_events} title="Recent Events" />
-          </aside>
+          ) : null}
         </div>
       </section>
+
+      {addProjectOpen ? (
+        <AddProjectDialog
+          onClose={() => setAddProjectOpen(false)}
+          onCreated={handleProjectCreated}
+        />
+      ) : null}
     </main>
   );
 }
 
-function RuntimeStatus({
-  apiBaseUrl,
+function ConnectionStatus({
+  error,
   health,
-  healthError,
-  lastRefreshAt,
-  loadState,
 }: {
-  apiBaseUrl: string;
+  error: string | null;
   health: RuntimeHealth | null;
-  healthError: string | null;
-  lastRefreshAt: string | null;
-  loadState: LoadState;
 }) {
-  const cells = [
-    ["API Base", apiBaseUrl],
-    ["Health", health ? `${health.service} ${health.version}` : healthError ?? "unknown"],
-    ["Database", health?.database_identity ?? "unknown"],
-    ["Refresh", loadState === "loading" ? "loading" : formatDate(lastRefreshAt)],
-  ];
+  const connected = health?.status === "ok" && !error;
   return (
-    <section className="runtime-panel" aria-label="Runtime status">
-      {cells.map(([label, value]) => (
-        <div className="runtime-cell" key={label}>
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </div>
-      ))}
-    </section>
+    <div
+      className={`connection-status connection-status--${connected ? "online" : "offline"}`}
+      title={connected ? `${health.service} ${health.version} | ${API_BASE_URL}` : error ?? API_BASE_URL}
+    >
+      <span aria-hidden="true" />
+      {connected ? "Connected" : "Disconnected"}
+    </div>
   );
 }
 
-function ProjectFilter({
-  allCount,
+function ProjectPicker({
   error,
   onClear,
+  onOpenChange,
+  onSync,
   onToggle,
-  options,
-  selectedRepositoryIds,
+  open,
+  projects,
+  selectedIds,
+  syncingIds,
 }: {
-  allCount: number;
   error: string | null;
   onClear: () => void;
-  onToggle: (repositoryId: string) => void;
-  options: ProjectFilterOption[];
-  selectedRepositoryIds: string[];
+  onOpenChange: (open: boolean) => void;
+  onSync: (project: Project) => void;
+  onToggle: (projectId: string) => void;
+  open: boolean;
+  projects: Project[];
+  selectedIds: string[];
+  syncingIds: string[];
 }) {
-  const selected = new Set(selectedRepositoryIds);
+  const [projectQuery, setProjectQuery] = useState("");
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const normalizedQuery = projectQuery.trim().toLowerCase();
+  const visibleProjects = normalizedQuery
+    ? projects.filter((project) => project.name.toLowerCase().includes(normalizedQuery))
+    : projects;
+  const selected = new Set(selectedIds);
+  const syncing = new Set(syncingIds);
+
+  useEffect(() => {
+    if (!open) return;
+    function closeOnOutsidePointer(event: PointerEvent) {
+      if (!pickerRef.current?.contains(event.target as Node)) onOpenChange(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") onOpenChange(false);
+    }
+    document.addEventListener("pointerdown", closeOnOutsidePointer);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("pointerdown", closeOnOutsidePointer);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [onOpenChange, open]);
+
   return (
-    <section className="project-filter" aria-label="Project filter">
-      <div className="project-filter__heading">
-        <span>Projects</span>
-        <strong>
-          {selectedRepositoryIds.length > 0
-            ? `${selectedRepositoryIds.length} selected`
-            : "All projects"}
-        </strong>
-      </div>
-      <div className="project-filter__options">
+    <div className="project-picker" aria-label="Project filter" ref={pickerRef}>
+      <button
+        aria-expanded={open}
+        className={`filter-button${selectedIds.length ? " filter-button--active" : ""}`}
+        onClick={() => onOpenChange(!open)}
+        type="button"
+      >
+        <FolderGit2 aria-hidden="true" size={16} />
+        <span>{selectedIds.length ? `${selectedIds.length} selected` : "All projects"}</span>
+        <ChevronsUpDown aria-hidden="true" size={14} />
+      </button>
+      {open ? (
+        <div className="project-menu">
+          <div className="project-menu__header">
+            <strong>Projects</strong>
+            <span>{selectedIds.length ? `${selectedIds.length} selected` : "All selected"}</span>
+          </div>
+          {projects.length > 6 ? (
+            <label className="project-search">
+              <Search aria-hidden="true" size={15} />
+              <input
+                aria-label="Search projects"
+                autoFocus
+                onChange={(event) => setProjectQuery(event.target.value)}
+                placeholder="Find a project"
+                value={projectQuery}
+              />
+            </label>
+          ) : null}
+          <button
+            aria-pressed={selectedIds.length === 0}
+            className="project-all"
+            onClick={onClear}
+            type="button"
+          >
+            <span className="checkbox-indicator" aria-hidden="true">
+              {selectedIds.length === 0 ? <Check size={14} /> : null}
+            </span>
+            <span>All projects</span>
+          </button>
+          <div className="project-options">
+            {visibleProjects.map((project) => (
+              <div className="project-option" key={project.id}>
+                <label>
+                  <input
+                    checked={selected.has(project.id)}
+                    onChange={() => onToggle(project.id)}
+                    type="checkbox"
+                  />
+                  <span className="checkbox-indicator" aria-hidden="true">
+                    {selected.has(project.id) ? <Check size={14} /> : null}
+                  </span>
+                  <span className="project-option__label">
+                    <strong>{project.name}</strong>
+                    <small>
+                      <span className={`sync-dot sync-dot--${project.sync.health}`} />
+                      {syncLabel(project)}
+                    </small>
+                  </span>
+                </label>
+                <button
+                  aria-label={`Sync ${project.name}`}
+                  className="menu-icon-button"
+                  disabled={syncing.has(project.id)}
+                  onClick={() => onSync(project)}
+                  title={`Sync ${project.name}`}
+                  type="button"
+                >
+                  <RefreshCw
+                    aria-hidden="true"
+                    className={syncing.has(project.id) ? "spin" : undefined}
+                    size={15}
+                  />
+                </button>
+              </div>
+            ))}
+            {visibleProjects.length === 0 ? (
+              <p className="project-menu__empty">
+                {error ?? (projects.length ? "No matching projects" : "No projects registered")}
+              </p>
+            ) : null}
+          </div>
+          <div className="project-menu__footer">
+            <button disabled={selectedIds.length === 0} onClick={onClear} type="button">
+              Clear selection
+            </button>
+            <button onClick={() => onOpenChange(false)} type="button">Done</button>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function StatusFilter({
+  activeState,
+  allCount,
+  byState,
+  onSelect,
+}: {
+  activeState: SchedulingState | null;
+  allCount: number;
+  byState: IssuePage["by_state"];
+  onSelect: (state: SchedulingState | null) => void;
+}) {
+  return (
+    <nav className="status-filter" aria-label="Issue status">
+      <button
+        aria-pressed={activeState === null}
+        className={activeState === null ? "status-filter__item status-filter__item--active" : "status-filter__item"}
+        onClick={() => onSelect(null)}
+        type="button"
+      >
+        <span>All</span>
+        <strong>{allCount}</strong>
+      </button>
+      {schedulingStates.map((state) => (
         <button
-          aria-pressed={selectedRepositoryIds.length === 0}
-          className={`filter-chip${
-            selectedRepositoryIds.length === 0 ? " filter-chip--active" : ""
-          }`}
-          onClick={onClear}
+          aria-pressed={activeState === state}
+          className={`status-filter__item status-filter__item--${state}${activeState === state ? " status-filter__item--active" : ""}`}
+          key={state}
+          onClick={() => onSelect(state)}
           type="button"
         >
-          <span className="filter-chip__main">All</span>
-          <strong>{allCount}</strong>
+          <span>{stateLabels[state]}</span>
+          <strong>{byState[state] ?? 0}</strong>
         </button>
-        {options.map((option) => (
-          <button
-            aria-pressed={selected.has(option.id)}
-            className={`filter-chip${selected.has(option.id) ? " filter-chip--active" : ""}`}
-            key={option.id}
-            onClick={() => onToggle(option.id)}
-            type="button"
-          >
-            <span className="filter-chip__main">{option.label}</span>
-            {option.syncStatus ? (
-              <span className="filter-chip__meta">{option.syncStatus}</span>
-            ) : null}
-            <strong>{option.count}</strong>
-          </button>
-        ))}
-      </div>
-      {error ? (
-        <p className="project-filter__error" role="status">
-          Project list unavailable - {error}
-        </p>
-      ) : null}
-    </section>
-  );
-}
-
-function SummaryStrip({
-  decisionCount,
-  failureCount,
-  summary,
-  visibleCount,
-}: {
-  decisionCount: number;
-  failureCount: number;
-  summary: QueueWorkbench["summary"];
-  visibleCount: number;
-}) {
-  const metrics = [
-    ["Visible", visibleCount],
-    ["Active leases", summary.active_leases],
-    ["Active locks", summary.active_locks],
-    ["Decisions", decisionCount],
-    ["Failures", failureCount],
-  ];
-  return (
-    <section className="summary-strip" aria-label="Queue summary">
-      {metrics.map(([label, value]) => (
-        <div className="summary-cell" key={label}>
-          <span>{label}</span>
-          <strong>{value}</strong>
-        </div>
       ))}
-    </section>
+    </nav>
   );
 }
 
-function NavButton({
-  active,
-  count,
-  label,
-  onClick,
-  sectionId,
-}: {
-  active: boolean;
-  count: number;
-  label: string;
-  onClick: () => void;
-  sectionId?: SectionId;
-}) {
-  const Icon = sectionId ? sectionIcons[sectionId] : CircleDot;
-  return (
-    <button
-      className={`nav-item${active ? " nav-item--active" : ""}`}
-      onClick={onClick}
-      type="button"
-    >
-      <Icon aria-hidden="true" size={16} />
-      <span>{label}</span>
-      <strong>{count}</strong>
-    </button>
-  );
-}
-
-function QueueSection({
+function IssueTable({
+  issues,
   onSelect,
-  repositoryById,
-  section,
-  selectedRowId,
+  projectById,
+  selectedIssueId,
 }: {
-  onSelect: (rowId: string) => void;
-  repositoryById: Map<string, Repository>;
-  section: QueueWorkbenchSection;
-  selectedRowId: string;
+  issues: ManagedIssue[];
+  onSelect: (issue: ManagedIssue) => void;
+  projectById: Map<string, Project>;
+  selectedIssueId: string | null;
 }) {
-  const Icon = sectionIcons[section.id];
   return (
-    <section className="queue-section" aria-labelledby={`${section.id}-heading`}>
-      <header className="queue-section__header">
+    <div className="table-scroll">
+      <table className="issue-table">
+        <thead>
+          <tr>
+            <th>Project</th>
+            <th>Issue</th>
+            <th>Status</th>
+            <th>Dependencies</th>
+            <th>Scheduling fact</th>
+            <th>Last synced</th>
+          </tr>
+        </thead>
+        <tbody>
+          {issues.map((issue) => {
+            const project = projectById.get(issue.project_id);
+            return (
+              <tr
+                aria-selected={selectedIssueId === issue.id}
+                className={selectedIssueId === issue.id ? "issue-row issue-row--selected" : "issue-row"}
+                key={issue.id}
+                onClick={() => onSelect(issue)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onSelect(issue);
+                  }
+                }}
+                tabIndex={0}
+              >
+                <td data-label="Project">
+                  <span className="project-name" title={project?.name ?? issue.project_id}>
+                    {project?.name ?? "Unknown project"}
+                  </span>
+                </td>
+                <td data-label="Issue">
+                  <button className="issue-title" onClick={() => onSelect(issue)} type="button">
+                    <span>#{issue.number}</span>
+                    <strong>{issue.title}</strong>
+                  </button>
+                </td>
+                <td data-label="Status"><StatusBadge state={issue.scheduling_state} /></td>
+                <td data-label="Dependencies"><DependencyProgress issue={issue} /></td>
+                <td data-label="Scheduling fact">
+                  <span className="scheduling-fact">{schedulingFact(issue)}</span>
+                </td>
+                <td data-label="Last synced">
+                  <time className="sync-time" dateTime={issue.last_synced_at ?? undefined} title={formatTimestamp(issue.last_synced_at)}>
+                    {formatRelative(issue.last_synced_at)}
+                  </time>
+                </td>
+              </tr>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function StatusBadge({ state }: { state: SchedulingState }) {
+  return (
+    <span className={`status-badge status-badge--${state}`}>
+      <span aria-hidden="true" />
+      {stateLabels[state]}
+    </span>
+  );
+}
+
+function DependencyProgress({ issue }: { issue: ManagedIssue }) {
+  if (!issue.analysis_completed) {
+    return <span className="dependency-empty">Not analyzed</span>;
+  }
+  if (issue.dependencies.length === 0) {
+    return <span className="dependency-empty">None</span>;
+  }
+  const ratio = issue.dependency_closed_count / issue.dependencies.length;
+  return (
+    <div className="dependency-progress" title={`${issue.dependency_closed_count} of ${issue.dependencies.length} dependencies closed`}>
+      <span>{issue.dependency_closed_count}/{issue.dependencies.length} closed</span>
+      <span className="progress-track" aria-hidden="true">
+        <span style={{ width: `${Math.min(100, ratio * 100)}%` }} />
+      </span>
+    </div>
+  );
+}
+
+function IssueDetail({
+  error,
+  issue,
+  loading,
+  onClose,
+  project,
+}: {
+  error: string | null;
+  issue: ManagedIssue;
+  loading: boolean;
+  onClose: () => void;
+  project: Project | undefined;
+}) {
+  return (
+    <aside className="detail-panel" aria-label="Issue details">
+      <header className="detail-panel__header">
         <div>
-          <Icon aria-hidden="true" size={18} />
-          <h2 id={`${section.id}-heading`}>{section.title}</h2>
+          <span>{project?.name ?? "Unknown project"} | #{issue.number}</span>
+          <h2>{issue.title}</h2>
         </div>
-        <span className={`count-badge count-badge--${sectionTones[section.id]}`}>
-          {section.count}
-        </span>
+        <button aria-label="Close issue details" onClick={onClose} title="Close details" type="button">
+          <X aria-hidden="true" size={18} />
+        </button>
       </header>
-      <div className="queue-section__rows">
-        {section.rows.length > 0 ? (
-          section.rows.map((row) => (
-            <WorkRow
-              key={row.id}
-              onSelect={onSelect}
-              repositoryById={repositoryById}
-              row={row}
-              selected={row.id === selectedRowId}
-            />
-          ))
-        ) : (
-          <p className="empty-state">No work</p>
-        )}
+      {loading ? <div className="detail-loading"><LoaderCircle className="spin" size={16} /> Refreshing facts</div> : null}
+      {error ? <p className="detail-error" role="alert">Could not refresh details: {error}</p> : null}
+      <div className="detail-actions">
+        <a href={issue.url} rel="noreferrer" target="_blank">
+          Open on GitHub <ExternalLink aria-hidden="true" size={14} />
+        </a>
       </div>
-    </section>
-  );
-}
-
-function WorkRow({
-  onSelect,
-  repositoryById,
-  row,
-  selected,
-}: {
-  onSelect: (rowId: string) => void;
-  repositoryById: Map<string, Repository>;
-  row: QueueWorkbenchRow;
-  selected: boolean;
-}) {
-  const projectLabel = repositoryLabel(row.repository_id, repositoryById);
-  return (
-    <button
-      className={`work-row${selected ? " work-row--selected" : ""}`}
-      onClick={() => onSelect(row.id)}
-      type="button"
-    >
-      <span className="work-row__title">{row.title}</span>
-      <span className="work-row__project" title={projectLabel}>
-        {projectLabel}
-      </span>
-      <span className="work-row__meta">
-        P{row.priority} - {row.risk} - {row.work_type}
-      </span>
-      <span className="work-row__reason">{row.reason_code}</span>
-      <span className="work-row__action">{row.next_action}</span>
-    </button>
-  );
-}
-
-function DetailPanel({
-  repositoryById,
-  row,
-  rowsById,
-}: {
-  repositoryById: Map<string, Repository>;
-  row: QueueWorkbenchRow;
-  rowsById: Map<string, QueueWorkbenchRow>;
-}) {
-  const repository = row.repository;
-  const projectLabel = repositoryLabel(row.repository_id, repositoryById);
-  return (
-    <section className="detail-panel" aria-label="Selected work item">
-      <div className="detail-panel__title">
-        <span className={`status-dot status-dot--${sectionTones[row.section]}`} />
-        <h2>{row.title}</h2>
-      </div>
-      <div className="detail-grid">
-        <DetailFact label="Status" value={row.status} />
-        <DetailFact label="Priority" value={`P${row.priority}`} />
-        <DetailFact label="Risk" value={row.risk} />
-        <DetailFact label="Type" value={row.work_type} />
-        <DetailFact label="Project" value={projectLabel} />
-      </div>
-      <DetailText label="Source" value={row.source_url ?? "not linked"} />
-      <DetailText label="Reason" value={row.reason_code} />
-      <DetailText label="Next Action" value={row.next_action} />
-      <DetailText label="Expected Touch" value={row.expected_touch ?? "not set"} />
-      <DetailText label="Acceptance" value={row.acceptance ?? "not set"} />
-      <DetailText label="Validation" value={row.validation ?? "not set"} />
-      <TagGroup label="Conflicts" values={row.conflict_keys} />
-      <DependencyGroup dependencyIds={row.dependency_ids} rowsById={rowsById} />
-      {row.worker_run ? <WorkerRunSummary run={row.worker_run} /> : null}
-      {Object.keys(repository).length > 0 ? (
-        <RepositorySummary repository={repository} />
+      <section className="detail-section">
+        <h3>Scheduling</h3>
+        <dl className="fact-list">
+          <div><dt>Status</dt><dd><StatusBadge state={issue.scheduling_state} /></dd></div>
+          <div><dt>GitHub state</dt><dd className="capitalize">{issue.source_state}</dd></div>
+          <div><dt>Dependency analysis</dt><dd>{issue.analysis_completed ? "Complete" : "Required"}</dd></div>
+          <div><dt>Dependencies closed</dt><dd>{issue.dependency_closed_count} of {issue.dependencies.length}</dd></div>
+          {issue.in_progress_since ? <div><dt>In progress since</dt><dd>{formatTimestamp(issue.in_progress_since)}</dd></div> : null}
+        </dl>
+      </section>
+      {issue.manual_hold_reason || issue.blocking_reasons.length ? (
+        <section className="detail-section">
+          <h3>Blocking facts</h3>
+          <ul className="fact-notes">
+            {issue.manual_hold_reason ? <li>{issue.manual_hold_reason}</li> : null}
+            {issue.blocking_reasons.map((reason) => <li key={reason}>{humanizeReason(reason)}</li>)}
+          </ul>
+        </section>
       ) : null}
-    </section>
-  );
-}
-
-function DetailFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="detail-fact">
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
-}
-
-function DetailText({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="detail-text">
-      <span>{label}</span>
-      <p>{value}</p>
-    </div>
-  );
-}
-
-function TagGroup({ label, values }: { label: string; values: string[] }) {
-  return (
-    <div className="tag-group">
-      <span>{label}</span>
-      <div>
-        {values.length > 0 ? (
-          values.map((value) => <code key={value}>{value}</code>)
+      <section className="detail-section">
+        <h3>Dependencies</h3>
+        {issue.dependencies.length ? (
+          <ul className="dependency-list">
+            {issue.dependencies.map((dependency) => (
+              <li key={dependency.issue_id}>
+                <span className={`source-dot source-dot--${dependency.source_state}`} aria-hidden="true" />
+                <a href={dependency.url} rel="noreferrer" target="_blank">
+                  <span>#{dependency.number}</span>
+                  <strong>{dependency.title}</strong>
+                  <ExternalLink aria-hidden="true" size={13} />
+                </a>
+                <small className="capitalize">{dependency.source_state}</small>
+              </li>
+            ))}
+          </ul>
         ) : (
-          <em>none</em>
+          <p className="detail-muted">{issue.analysis_completed ? "No dependencies." : "Dependency analysis has not been reported."}</p>
         )}
+      </section>
+      <section className="detail-section">
+        <h3>Synchronization</h3>
+        <dl className="fact-list">
+          <div><dt>Issue synchronized</dt><dd>{formatTimestamp(issue.last_synced_at)}</dd></div>
+          <div><dt>Project health</dt><dd><SyncHealthLabel project={project} /></dd></div>
+          {project?.sync.last_success_at ? <div><dt>Project last success</dt><dd>{formatTimestamp(project.sync.last_success_at)}</dd></div> : null}
+          {project?.sync.last_error ? <div><dt>Latest sync error</dt><dd className="error-text">{project.sync.last_error}</dd></div> : null}
+        </dl>
+      </section>
+    </aside>
+  );
+}
+
+function SyncHealthLabel({ project }: { project: Project | undefined }) {
+  if (!project) {
+    return <>Unknown</>;
+  }
+  return <span className="sync-health"><span className={`sync-dot sync-dot--${project.sync.health}`} />{project.sync.health}</span>;
+}
+
+function Pagination({
+  currentPage,
+  onPageChange,
+  pageSize,
+  total,
+  totalPages,
+}: {
+  currentPage: number;
+  onPageChange: (page: number) => void;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}) {
+  const first = (currentPage - 1) * pageSize + 1;
+  const last = Math.min(currentPage * pageSize, total);
+  return (
+    <nav className="pagination" aria-label="Issue pages">
+      <span>{first}-{last} of {total}</span>
+      <div>
+        <button aria-label="Previous page" disabled={currentPage <= 1} onClick={() => onPageChange(currentPage - 1)} title="Previous page" type="button">
+          <ChevronLeft aria-hidden="true" size={17} />
+        </button>
+        <span>Page {currentPage} of {totalPages}</span>
+        <button aria-label="Next page" disabled={currentPage >= totalPages} onClick={() => onPageChange(currentPage + 1)} title="Next page" type="button">
+          <ChevronRight aria-hidden="true" size={17} />
+        </button>
       </div>
-    </div>
+    </nav>
   );
 }
 
-function DependencyGroup({
-  dependencyIds,
-  rowsById,
+function AddProjectDialog({
+  onClose,
+  onCreated,
 }: {
-  dependencyIds: string[];
-  rowsById: Map<string, QueueWorkbenchRow>;
+  onClose: () => void;
+  onCreated: (project: Project) => void;
 }) {
-  const values = dependencyIds.map((dependencyId) => {
-    const row = rowsById.get(dependencyId);
-    return row ? `${row.title} - ${row.status}` : dependencyId;
-  });
-  return <TagGroup label="Dependencies" values={values} />;
-}
+  const [remote, setRemote] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-function WorkerRunSummary({ run }: { run: NonNullable<QueueWorkbenchRow["worker_run"]> }) {
-  return (
-    <section className="inline-summary" aria-label="Worker run">
-      <h3>Worker Run</h3>
-      <DetailText label="Status" value={run.status} />
-      <DetailText label="Role" value={run.role} />
-      <DetailText label="Result" value={run.result ?? "open"} />
-      <DetailText label="Heartbeat" value={formatDate(run.heartbeat_at)} />
-    </section>
-  );
-}
+  useEffect(() => {
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape" && !submitting) onClose();
+    }
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [onClose, submitting]);
 
-function RepositorySummary({
-  repository,
-}: {
-  repository: Record<string, unknown>;
-}) {
-  return (
-    <section className="inline-summary" aria-label="Repository summary">
-      <h3>
-        <GitPullRequest aria-hidden="true" size={15} />
-        Repository
-      </h3>
-      <DetailText
-        label="PR"
-        value={stringValue(repository.pull_request_number, "not linked")}
-      />
-      <DetailText
-        label="Checks"
-        value={`${stringValue(repository.pending_checks, "0")} pending - ${stringValue(
-          repository.failing_checks,
-          "0",
-        )} failing`}
-      />
-      <DetailText
-        label="Review"
-        value={`${stringValue(repository.review_state, "unknown")} - ${stringValue(
-          repository.unresolved_threads,
-          "0",
-        )} unresolved`}
-      />
-    </section>
-  );
-}
-
-function DecisionInbox({
-  onSelect,
-  repositoryById,
-  rows,
-  selectedRowId,
-}: {
-  onSelect: (rowId: string) => void;
-  repositoryById: Map<string, Repository>;
-  rows: QueueWorkbenchRow[];
-  selectedRowId: string;
-}) {
-  return (
-    <section className="side-panel" aria-labelledby="decision-inbox-heading">
-      <header>
-        <h2 id="decision-inbox-heading">Decision Inbox</h2>
-        <span>{rows.length}</span>
-      </header>
-      {rows.length > 0 ? (
-        rows.map((row) => (
-          <button
-            className={`decision-row${
-              row.id === selectedRowId ? " decision-row--active" : ""
-            }`}
-            key={row.id}
-            onClick={() => onSelect(row.id)}
-            type="button"
-          >
-            <strong>{row.title}</strong>
-            <span>
-              {repositoryLabel(row.repository_id, repositoryById)} - {row.reason_code}
-            </span>
-          </button>
-        ))
-      ) : (
-        <p className="empty-state">No decisions</p>
-      )}
-    </section>
-  );
-}
-
-function RecoverySignals({
-  signals,
-}: {
-  signals: QueueWorkbenchRecoverySignal[];
-}) {
-  return (
-    <section className="side-panel" aria-labelledby="recovery-signals-heading">
-      <header>
-        <h2 id="recovery-signals-heading">Recovery Signals</h2>
-        <span>{signals.length}</span>
-      </header>
-      {signals.length > 0 ? (
-        <ol className="signal-list">
-          {signals.map((signal) => (
-            <li className={`signal-row signal-row--${signal.severity}`} key={signal.id}>
-              <strong>{signal.title}</strong>
-              <span>
-                {signal.count} · {signal.action}
-              </span>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="empty-state">No recovery signals</p>
-      )}
-    </section>
-  );
-}
-
-function EventFeed({
-  events,
-  title,
-}: {
-  events: QueueWorkbenchEvent[];
-  title: string;
-}) {
-  return (
-    <section className="side-panel" aria-labelledby={`${slug(title)}-heading`}>
-      <header>
-        <h2 id={`${slug(title)}-heading`}>{title}</h2>
-        <span>{events.length}</span>
-      </header>
-      {events.length > 0 ? (
-        <ol className="event-list">
-          {events.map((event) => (
-            <li key={event.id}>
-              <strong>{event.summary}</strong>
-              <span>
-                {event.status ?? event.kind} · {formatDate(event.created_at)}
-              </span>
-            </li>
-          ))}
-        </ol>
-      ) : (
-        <p className="empty-state">No events</p>
-      )}
-    </section>
-  );
-}
-
-function EmptyDetail() {
-  return (
-    <section className="detail-panel">
-      <h2>No work selected</h2>
-    </section>
-  );
-}
-
-function rowsFromSections(sections: QueueWorkbenchSection[]): QueueWorkbenchRow[] {
-  return sections.flatMap((section) => section.rows);
-}
-
-function filterRows(
-  rows: QueueWorkbenchRow[],
-  query: string,
-  selectedRepositoryIds: string[],
-): QueueWorkbenchRow[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  return rows.filter(
-    (row) =>
-      rowMatchesProject(row, selectedRepositoryIds) &&
-      (!normalizedQuery || matchesRow(row, normalizedQuery)),
-  );
-}
-
-function filterSections(
-  sections: QueueWorkbenchSection[],
-  activeSection: SectionId | typeof allSections,
-  query: string,
-  selectedRepositoryIds: string[],
-): QueueWorkbenchSection[] {
-  const normalizedQuery = query.trim().toLowerCase();
-  return sections
-    .filter((section) => activeSection === allSections || section.id === activeSection)
-    .map((section) => {
-      const rows = section.rows.filter(
-        (row) =>
-          rowMatchesProject(row, selectedRepositoryIds) &&
-          (!normalizedQuery || matchesRow(row, normalizedQuery)),
-      );
-      return { ...section, count: rows.length, rows };
-    });
-}
-
-function buildProjectOptions(
-  rows: QueueWorkbenchRow[],
-  repositories: Repository[],
-): ProjectFilterOption[] {
-  const counts = new Map<string, number>();
-  for (const row of rows) {
-    const projectId = row.repository_id ?? unscopedProjectId;
-    counts.set(projectId, (counts.get(projectId) ?? 0) + 1);
-  }
-
-  const knownRepositoryIds = new Set(repositories.map((repository) => repository.id));
-  const options = repositories.map((repository) => ({
-    id: repository.id,
-    label: repository.name,
-    count: counts.get(repository.id) ?? 0,
-    syncStatus: repository.sync_status,
-  }));
-
-  const unscopedCount = counts.get(unscopedProjectId) ?? 0;
-  if (unscopedCount > 0) {
-    options.unshift({
-      id: unscopedProjectId,
-      label: "Unscoped",
-      count: unscopedCount,
-      syncStatus: "local",
-    });
-  }
-
-  for (const [repositoryId, count] of counts) {
-    if (repositoryId !== unscopedProjectId && !knownRepositoryIds.has(repositoryId)) {
-      options.push({
-        id: repositoryId,
-        label: `Unknown project ${shortIdentifier(repositoryId)}`,
-        count,
-        syncStatus: "not registered",
-      });
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!remote.trim()) {
+      setError("Enter a GitHub repository URL or owner/name.");
+      return;
+    }
+    setSubmitting(true);
+    setError(null);
+    try {
+      onCreated(await createProject(remote.trim()));
+    } catch (submitError) {
+      setError(errorMessage(submitError));
+    } finally {
+      setSubmitting(false);
     }
   }
 
-  return options;
-}
-
-function rowMatchesProject(
-  row: QueueWorkbenchRow,
-  selectedRepositoryIds: string[],
-): boolean {
-  if (selectedRepositoryIds.length === 0) {
-    return true;
-  }
-  return selectedRepositoryIds.includes(row.repository_id ?? unscopedProjectId);
-}
-
-function repositoryLabel(
-  repositoryId: string | null,
-  repositoryById: Map<string, Repository>,
-): string {
-  if (!repositoryId) {
-    return "Unscoped";
-  }
   return (
-    repositoryById.get(repositoryId)?.name ?? `Unknown project ${shortIdentifier(repositoryId)}`
+    <div className="dialog-backdrop" onMouseDown={(event) => {
+      if (event.currentTarget === event.target) onClose();
+    }}>
+      <section aria-labelledby="add-project-title" aria-modal="true" className="dialog" role="dialog">
+        <header>
+          <div>
+            <h2 id="add-project-title">Add project</h2>
+            <p>Register a GitHub repository for Issue synchronization.</p>
+          </div>
+          <button aria-label="Close add project" onClick={onClose} title="Close" type="button"><X aria-hidden="true" size={18} /></button>
+        </header>
+        <form aria-label="Add project" onSubmit={submit}>
+          <label>
+            GitHub repository
+            <input
+              autoFocus
+              disabled={submitting}
+              onChange={(event) => setRemote(event.target.value)}
+              placeholder="owner/repository"
+              value={remote}
+            />
+          </label>
+          <p className="field-help">GitHub HTTPS URLs and owner/repository names are accepted.</p>
+          {error ? <p className="form-error" role="alert">{error}</p> : null}
+          <footer>
+            <button className="secondary-button" disabled={submitting} onClick={onClose} type="button">Cancel</button>
+            <button className="command-button" disabled={submitting} type="submit">
+              {submitting ? <LoaderCircle aria-hidden="true" className="spin" size={16} /> : <Plus aria-hidden="true" size={16} />}
+              Add project
+            </button>
+          </footer>
+        </form>
+      </section>
+    </div>
   );
 }
 
-function matchesRow(row: QueueWorkbenchRow, normalizedQuery: string): boolean {
-  return [
-    row.title,
-    row.status,
-    row.reason_code,
-    row.next_action,
-    row.expected_touch ?? "",
-    row.source_url ?? "",
-  ]
-    .join(" ")
-    .toLowerCase()
-    .includes(normalizedQuery);
+function LoadingState() {
+  return <div className="state-message" role="status"><LoaderCircle className="spin" size={20} /><strong>Loading Issues</strong><span>Reading the current scheduler view.</span></div>;
 }
 
-function formatDate(value: string | null): string {
-  if (!value) {
-    return "not recorded";
+function EmptyState({ hasFilters }: { hasFilters: boolean }) {
+  return <div className="state-message"><CircleDot size={20} /><strong>{hasFilters ? "No matching Issues" : "No Issues synchronized"}</strong><span>{hasFilters ? "Change the project, status, or search filter." : "Add a project or synchronize a registered project."}</span></div>;
+}
+
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+  return <div className="state-message state-message--error" role="alert"><AlertCircle size={20} /><strong>Issues could not be loaded</strong><span>{message}</span><button className="secondary-button" onClick={onRetry} type="button">Try again</button></div>;
+}
+
+function schedulingFact(issue: ManagedIssue): string {
+  if (issue.manual_hold_reason) return issue.manual_hold_reason;
+  if (issue.blocking_reasons.length) return humanizeReason(issue.blocking_reasons[0]);
+  if (issue.scheduling_state === "needs_analysis") return "Dependency analysis required";
+  if (issue.scheduling_state === "ready") return "Dependencies satisfied";
+  if (issue.scheduling_state === "in_progress") return "Assigned by main AI";
+  if (issue.scheduling_state === "closed") return "GitHub Issue closed";
+  return issue.claim_block_reason ? humanizeReason(issue.claim_block_reason) : "Waiting for dependencies";
+}
+
+function humanizeReason(reason: string): string {
+  if (reason.startsWith("dependency_open:")) {
+    return `Dependency Issue #${reason.split(":", 2)[1]} is open`;
   }
-  return new Date(value).toISOString().replace(".000Z", "Z");
+  const labels: Record<string, string> = {
+    analysis_required: "Dependency analysis is required",
+    manual_hold: "Manual hold",
+    project_disabled: "Project scheduling is disabled",
+    sync_unhealthy: "Project synchronization is unhealthy",
+    sync_unknown: "Project has not synchronized successfully",
+    sync_stale: "Project synchronization is stale",
+  };
+  if (labels[reason]) return labels[reason];
+  return reason.replaceAll("_", " ").replace(/^./, (character) => character.toUpperCase());
 }
 
-function stringValue(value: unknown, fallback: string): string {
-  if (value === null || value === undefined || value === "") {
-    return fallback;
-  }
-  return String(value);
+function syncLabel(project: Project): string {
+  if (project.sync.health === "syncing") return "Synchronizing";
+  if (project.sync.last_success_at) return `${project.sync.health} | ${formatRelative(project.sync.last_success_at)}`;
+  return project.sync.health;
 }
 
-function slug(value: string): string {
-  return value.toLowerCase().replace(/\s+/g, "-");
+function sumStateCounts(page: IssuePage): number {
+  return schedulingStates.reduce((total, state) => total + (page.by_state[state] ?? 0), 0);
 }
 
-function shortIdentifier(value: string): string {
-  return value.length > 8 ? value.slice(0, 8) : value;
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return "Not available";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "Not available";
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(date);
+}
+
+function formatRelative(value: string | null | undefined): string {
+  if (!value) return "Never";
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return "Unknown";
+  const seconds = Math.round((timestamp - Date.now()) / 1000);
+  const absoluteSeconds = Math.abs(seconds);
+  if (absoluteSeconds < 60) return "just now";
+  if (absoluteSeconds < 3600) return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(Math.round(seconds / 60), "minute");
+  if (absoluteSeconds < 86400) return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(Math.round(seconds / 3600), "hour");
+  return new Intl.RelativeTimeFormat(undefined, { numeric: "auto" }).format(Math.round(seconds / 86400), "day");
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : "Request failed";
 }
